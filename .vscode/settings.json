@@ -1,0 +1,9 @@
+{
+     "C_Cpp.errorSquiggles": "disabled",
+    "Codegeex.RepoIndex": true, // 禁用 C/C++ 的波浪线
+    "C_Cpp.intelliSenseEngine": "Default",
+    "C_Cpp.intelliSenseEngineFallback": "Enabled",
+    "editor.mouseWheelZoom": true,
+    "cmake.sourceDirectory": "D:/Desktop/淘晶驰/Breath/Drivers/CMSIS/NN",
+    "cmake.autoDetectSourceDirectory": false
+}

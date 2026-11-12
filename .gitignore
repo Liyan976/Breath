@@ -1,0 +1,27 @@
+# Keil MDK-ARM build outputs & user GUI state
+MDK-ARM/Breath/
+MDK-ARM/DebugConfig/
+MDK-ARM/RTE/
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/*.lst
+MDK-ARM/*.map
+MDK-ARM/*.axf
+MDK-ARM/*.hex
+MDK-ARM/*.bin
+MDK-ARM/*.build_log.htm
+MDK-ARM/build_log.txt
+MDK-ARM/JLinkLog.txt
+MDK-ARM/JLinkSettings.ini
+
+# General temporary files
+*.o
+*.d
+*.crf
+*.__i
+*.dep
+*.lnp
+*.sct
+*.TMP
+*.tmp
+*.bak
