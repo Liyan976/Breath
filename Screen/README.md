@@ -362,4 +362,8 @@ BSP_Screen_SetElectrodeWarn(1, 1);
 
 /* 弹出气泡提示 */
 BSP_Screen_ShowToast("Therapy Paused");
+
+/* 变参格式化发送（类似 printf，自动补 0xFF 0xFF 0xFF，互斥锁保护） */
+BSP_Screen_Printf("showcurve.t1.txt=\"a=%.4f\"", 1.2345f);
+BSP_Screen_Printf("page %s", "savecurve");
 ```
