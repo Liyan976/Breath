@@ -25,3 +25,7 @@ MDK-ARM/JLinkSettings.ini
 *.TMP
 *.tmp
 *.bak
+
+# VS Code C/C++ local database
+.vscode/vc.db*
+

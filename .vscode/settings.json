@@ -1,9 +1,27 @@
 {
-     "C_Cpp.errorSquiggles": "disabled",
-    "Codegeex.RepoIndex": true, // 禁用 C/C++ 的波浪线
-    "C_Cpp.intelliSenseEngine": "Default",
-    "C_Cpp.intelliSenseEngineFallback": "Enabled",
+    // 强制启用微软 C/C++ 官方 IntelliSense 语义分析与精准跳转
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.intelliSenseEngineFallback": "Disabled",
+
+    // 禁用此工程下的 STM32Cube Clangd，防止其因缺少 compile_commands.json 劫持跳转
+    "stm32cube-ide-clangd.enable": false,
+    "clangd.enable": false,
+
+    // 跳转行为：有多重定义或声明时直接精准跳转到目标，不弹出内联偷窥 Peek 窗口
+    "editor.gotoLocation.multipleDefinitions": "goto",
+    "editor.gotoLocation.multipleDeclarations": "goto",
+    "editor.gotoLocation.multipleImplementations": "goto",
+    "editor.gotoLocation.multipleTypeDefinitions": "goto",
+
+    // 符号索引与本地持久化数据库
+    "C_Cpp.default.browse.limitSymbolsToIncludedHeaders": false,
+    "C_Cpp.default.browse.databaseFilename": "${workspaceFolder}/.vscode/vc.db",
+
+    // 保持代码视窗整洁，禁用波浪线报错
+    "C_Cpp.errorSquiggles": "disabled",
+    "Codegeex.RepoIndex": true,
     "editor.mouseWheelZoom": true,
+
     "cmake.sourceDirectory": "D:/Desktop/淘晶驰/Breath/Drivers/CMSIS/NN",
     "cmake.autoDetectSourceDirectory": false
 }

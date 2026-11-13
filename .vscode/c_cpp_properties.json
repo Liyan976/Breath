@@ -44,7 +44,8 @@
                     "${workspaceFolder}/Middlewares/Third_Party/FatFs/src",
                     "D:/ARM/ARMCC/include"
                 ],
-                "limitSymbolsToIncludedHeaders": true
+                "limitSymbolsToIncludedHeaders": false,
+                "databaseFilename": "${workspaceFolder}/.vscode/vc.db"
             },
             "defines": [
                 "USE_HAL_DRIVER",
