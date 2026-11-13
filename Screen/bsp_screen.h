@@ -69,6 +69,7 @@ uint32_t BSP_Screen_GetRxOverflowCount(void);
 
 /* ================= 底层串口屏指令发送接口 ================= */
 void     BSP_Screen_SendRawCmd(const char *cmd);
+void     BSP_Screen_Printf(const char *format, ...);
 void     BSP_Screen_SetNum(const char *obj, const char *attr, int32_t val);
 void     BSP_Screen_SetText(const char *obj, const char *attr, const char *txt);
 void     BSP_Screen_SetVisible(const char *obj, uint8_t visible);

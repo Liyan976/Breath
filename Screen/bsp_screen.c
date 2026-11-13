@@ -9,6 +9,7 @@
 #include "cmsis_os.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 #define SCREEN_RX_RING_SIZE     256U    /**< 接收环形缓冲区容量（字节） */
 
@@ -208,6 +209,25 @@ void BSP_Screen_SendRawCmd(const char *cmd)
     if (cmd == NULL) return;
     screen_uart_send_bytes((const uint8_t *)cmd, (uint16_t)strlen(cmd));
     screen_send_end();
+}
+
+/**
+ * @brief  类似 printf 的变参格式化发送接口（自动格式化并附加 0xFF 0xFF 0xFF 结束符，受互斥锁保护）
+ * @param  format: 格式化字符串，如 "page %s"、"result.t1.txt=\"%.4f\""
+ * @param  ...: 可变参数列表
+ * @retval 无
+ */
+void BSP_Screen_Printf(const char *format, ...)
+{
+    char buf[128];
+    va_list args;
+    if (format == NULL) return;
+
+    va_start(args, format);
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+
+    BSP_Screen_SendRawCmd(buf);
 }
 
 /**
