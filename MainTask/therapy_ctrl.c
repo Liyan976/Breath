@@ -467,9 +467,10 @@ void App_Therapy_StopToMenu(void)
 
 void App_Therapy_PowerOffRequest(void)
 {
+    BSP_Screen_SendRawCmd("sleep=1"); /* 串口屏立即熄屏休眠 */
     BSP_Stim_EmergencyStop();
     BSP_Audio_Stop();
-    if (g_app.active_elapsed_ms > 0U)
+    if (g_app.active_elapsed_ms > 0U && g_app.sys_state != APP_STATE_FINISHED)
     {
         BSP_Storage_LogSession((uint8_t)g_app.Breath_Mode,
                                (uint8_t)g_app.Stim_Mode,
@@ -478,6 +479,7 @@ void App_Therapy_PowerOffRequest(void)
                                (uint16_t)(g_app.active_elapsed_ms / 1000U),
                                g_app.guide_bpm);
     }
+    HAL_Delay(5U);
     BSP_Power_ShutdownNow();
 }
 
@@ -633,9 +635,14 @@ void App_Therapy_MainTick10ms(uint32_t now_ms)
     }
     else if (g_app.sys_state == APP_STATE_FINISHED)
     {
-        if ((now_ms - g_app.finish_tick_ms) >= APP_FINISH_AUTO_OFF_MS)
+        /* 语音播报期间（0010有效时长+0020~0045时间+0012关机提示）保持刷新计时，确保提示播报完毕后再等待 10s */
+        if (BSP_Audio_IsBusy())
         {
-            BSP_Power_ShutdownNow();
+            g_app.finish_tick_ms = now_ms;
+        }
+        else if ((now_ms - g_app.finish_tick_ms) >= APP_FINISH_AUTO_OFF_MS)
+        {
+            App_Therapy_PowerOffRequest();
         }
     }
 }
