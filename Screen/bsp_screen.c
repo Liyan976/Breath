@@ -154,7 +154,7 @@ uint8_t BSP_Screen_ReadFrame(ScreenFrame_t *frame)
             continue;
         }
 
-        /* 状态机检测连续 3 个 0xFF 帧结束符 */
+        /* 1. 统一协议定界：检测淘晶驰标准连续 3 个 0xFF 帧结束符 */
         if (b == 0xFFU)
         {
             s_ff_cnt++;
@@ -168,6 +168,7 @@ uint8_t BSP_Screen_ReadFrame(ScreenFrame_t *frame)
                     memcpy(frame->raw, s_frame_buf, payload_len);
                     frame->len     = payload_len;
                     frame->header  = frame->raw[0];
+                    if (frame->header == 0xA5U) frame->header = 0x05U; /* 自动规格化为统一的 0x05 帧头 */
                     frame->page    = (payload_len > 1U) ? frame->raw[1] : 0U;
                     frame->control = (payload_len > 2U) ? frame->raw[2] : 0U;
                     frame->value   = (payload_len > 3U) ? frame->raw[3] : 0U;
@@ -184,6 +185,23 @@ uint8_t BSP_Screen_ReadFrame(ScreenFrame_t *frame)
         else
         {
             s_ff_cnt = 0U;
+
+            /* 2. 兼容兜底：若收到旧脚本尾部带 0x5A 的定长帧，也提取并归一化为 0x05 */
+            if ((s_frame_buf[0] == 0x05U || s_frame_buf[0] == 0xA5U) && b == 0x5AU && s_frame_len >= 4U)
+            {
+                uint8_t payload_len = (uint8_t)s_frame_len;
+                memset(frame, 0, sizeof(*frame));
+                memcpy(frame->raw, s_frame_buf, payload_len);
+                frame->len     = payload_len;
+                frame->header  = 0x05U; /* 统一按 0x05 协议分发 */
+                frame->page    = (payload_len > 1U) ? frame->raw[1] : 0U;
+                frame->control = (payload_len > 2U) ? frame->raw[2] : 0U;
+                frame->value   = (payload_len > 3U) ? frame->raw[3] : 0U;
+
+                s_frame_len = 0U;
+                s_ff_cnt = 0U;
+                return 1U;
+            }
         }
     }
 
@@ -209,6 +227,18 @@ void BSP_Screen_SendRawCmd(const char *cmd)
     if (cmd == NULL) return;
     screen_uart_send_bytes((const uint8_t *)cmd, (uint16_t)strlen(cmd));
     screen_send_end();
+}
+
+/**
+ * @brief  直接向下位机串口屏发送原始二进制字节流（受互斥锁保护，不自动补结束符）
+ * @param  data: 待发送二进制数据指针
+ * @param  len: 字节数
+ * @retval 无
+ */
+void BSP_Screen_SendRawBytes(const uint8_t *data, uint16_t len)
+{
+    if (data == NULL || len == 0U) return;
+    screen_uart_send_bytes(data, len);
 }
 
 /**
@@ -284,18 +314,18 @@ void BSP_Screen_SetPage(const char *page_name)
 }
 
 /**
- * @brief  更新肺部动画进度条控件（lung.val = 0~100）
+ * @brief  更新肺部动画进度条控件（j0.val = 0~100）
  * @param  pct_0_to_100: 填充百分比（0=排空，100=充盈）
  * @retval 无
  */
 void BSP_Screen_SetLungFill(uint8_t pct_0_to_100)
 {
     if (pct_0_to_100 > 100U) pct_0_to_100 = 100U;
-    BSP_Screen_SetNum("lung", "val", (int32_t)pct_0_to_100);
+    BSP_Screen_SetNum("j0", "val", (int32_t)pct_0_to_100);
 }
 
 /**
- * @brief  控制呼吸箭头显隐（吸气显示 arr_in，呼气显示 arr_ex，其余全隐）
+ * @brief  控制呼吸箭头显隐（吸气显示 p1，呼气显示 p2，其余全隐）
  * @param  phase: 0=隐藏，1=吸气，2=呼气
  * @retval 无
  */
@@ -303,33 +333,33 @@ void BSP_Screen_SetBreathArrow(uint8_t phase)
 {
     if (phase == 1U)
     {
-        BSP_Screen_SetVisible("arr_in", 1U);
-        BSP_Screen_SetVisible("arr_ex", 0U);
+        BSP_Screen_SetVisible("p1", 1U);
+        BSP_Screen_SetVisible("p2", 0U);
     }
     else if (phase == 2U)
     {
-        BSP_Screen_SetVisible("arr_in", 0U);
-        BSP_Screen_SetVisible("arr_ex", 1U);
+        BSP_Screen_SetVisible("p1", 0U);
+        BSP_Screen_SetVisible("p2", 1U);
     }
     else
     {
-        BSP_Screen_SetVisible("arr_in", 0U);
-        BSP_Screen_SetVisible("arr_ex", 0U);
+        BSP_Screen_SetVisible("p1", 0U);
+        BSP_Screen_SetVisible("p2", 0U);
     }
 }
 
 /**
- * @brief  更新屏幕呼吸引导频率显示（gbpm.val）
+ * @brief  更新屏幕呼吸引导频率显示（start.breath_freq.val 与 gbpm.val）
  * @param  bpm: 当前引导频率（次/分钟）
  * @retval 无
  */
 void BSP_Screen_SetGuideBPM(uint8_t bpm)
 {
-    BSP_Screen_SetNum("gbpm", "val", (int32_t)bpm);
+    BSP_Screen_SetNum("start.breath_freq", "val", (int32_t)bpm);
 }
 
 /**
- * @brief  更新屏幕剩余治疗倒计时显示（t_time.txt = "MM:SS"）
+ * @brief  更新屏幕剩余治疗倒计时显示（同步 start.timer_cnt.val 分钟数及 t_time.txt = "MM:SS"）
  * @param  remain_sec: 剩余时间（秒）
  * @retval 无
  */
@@ -339,6 +369,7 @@ void BSP_Screen_SetRemainTimeSec(uint16_t remain_sec)
     uint16_t min = remain_sec / 60U;
     uint16_t sec = remain_sec % 60U;
     snprintf(buf, sizeof(buf), "%02u:%02u", min, sec);
+    BSP_Screen_SetNum("start.timer_cnt", "val", (int32_t)min);
     BSP_Screen_SetText("t_time", "txt", buf);
 }
 
@@ -357,14 +388,15 @@ void BSP_Screen_SetElectrodeWarn(uint8_t ch, uint8_t dropped)
 }
 
 /**
- * @brief  更新右上角电池电量显示（batt.val = 0~100）
+ * @brief  更新右上角电池电量显示（同步 start.bat.val 与进度条 j1.val）
  * @param  pct: 电量百分比
  * @retval 无
  */
 void BSP_Screen_SetBattery(uint8_t pct)
 {
     if (pct > 100U) pct = 100U;
-    BSP_Screen_SetNum("batt", "val", (int32_t)pct);
+    BSP_Screen_SetNum("start.bat", "val", (int32_t)pct);
+    BSP_Screen_SetNum("j1", "val", (int32_t)pct);
 }
 
 /**

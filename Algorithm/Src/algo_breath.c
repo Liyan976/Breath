@@ -7,7 +7,7 @@
 #define VALLEY_MAX_INTERVAL_MS  15000U /* >= 4 BPM */
 #define VALLEY_AMP_MIN_THRESH   4.0f
 #define GBPM_MIN                5U
-#define GBPM_MAX                30U
+#define GBPM_MAX                10U
 
 static float    s_buf[BREATH_BUF_LEN];
 static uint32_t s_sample_cnt = 0U;

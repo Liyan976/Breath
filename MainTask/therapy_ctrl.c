@@ -9,6 +9,11 @@
 
 AppContext_t g_app;
 
+static uint8_t  s_bio_calib_repeat = 0U;
+static uint8_t  s_bio_busy_prev    = 0U;
+static uint8_t  s_bio_wait_5s      = 0U;
+static uint32_t s_bio_calib_tick   = 0U;
+
 static uint8_t therapy_can_start(void)
 {
     if (g_app.Breath_Mode == BREATH_MODE_OFF && g_app.Stim_Mode == STIM_MODE_OFF)
@@ -136,6 +141,10 @@ void App_Therapy_SelectBreathMode(BreathMode_t mode)
     {
         Algo_Breath_ResetBioCalib();
         g_app.sys_state = APP_STATE_BIO_CALIB;
+        s_bio_calib_repeat = 1U; /* 第一次播报 0007 */
+        s_bio_calib_tick = HAL_GetTick();
+        s_bio_busy_prev = 1U;
+        s_bio_wait_5s = 0U;
         BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_CALIB);
     }
     else if (mode == BREATH_MODE_SIMPLE)
@@ -210,7 +219,7 @@ void App_Therapy_SetStimLevel(uint8_t ch, uint8_t level_0_to_10)
     BSP_Stim_SetChannelLevel(ch, level_0_to_10);
 }
 
-void App_Therapy_StartOrPause(void)
+void App_Therapy_Pause(void)
 {
     if (g_app.sys_state == APP_STATE_RUNNING)
     {
@@ -219,10 +228,11 @@ void App_Therapy_StartOrPause(void)
         BSP_Stim_Enable(0U);
         BSP_Audio_Stop();
         BSP_Screen_SetBreathArrow(0U);
-        BSP_Screen_SetPage("paused");
-        return;
     }
+}
 
+void App_Therapy_Resume(void)
+{
     if (g_app.sys_state == APP_STATE_PAUSED)
     {
         g_app.paused = 0U;
@@ -238,6 +248,21 @@ void App_Therapy_StartOrPause(void)
                                       1U, g_app.stim_freq_hz ? g_app.stim_freq_hz : 1U);
             BSP_Stim_Enable(1U);
         }
+    }
+}
+
+void App_Therapy_StartOrPause(void)
+{
+    if (g_app.sys_state == APP_STATE_RUNNING)
+    {
+        App_Therapy_Pause();
+        BSP_Screen_SetPage("paused");
+        return;
+    }
+
+    if (g_app.sys_state == APP_STATE_PAUSED)
+    {
+        App_Therapy_Resume();
         BSP_Screen_SetPage("running");
         return;
     }
@@ -281,6 +306,141 @@ void App_Therapy_StartOrPause(void)
 
     BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
     BSP_Screen_SetPage("running");
+}
+
+void App_Therapy_StartSimpleBreath(uint8_t timer_min, uint8_t volume, uint8_t ble_en)
+{
+    App_Therapy_SetTimerMin(timer_min);
+    App_Therapy_SetVolume(volume);
+    App_Therapy_SetBleEnable(ble_en);
+
+    g_app.Breath_Mode = BREATH_MODE_SIMPLE;
+    g_app.Stim_Mode   = STIM_MODE_OFF;
+    g_app.guide_bpm   = 10U;
+
+    g_app.active_elapsed_ms = 0U;
+    g_app.running = 1U;
+    g_app.paused  = 0U;
+    g_app.sys_state = APP_STATE_RUNNING;
+
+    Algo_Breath_StartGuide(g_app.guide_bpm);
+    BSP_Stim_SetComboOverride(0U, 0U, 1U);
+    BSP_Stim_Enable(0U);
+
+    BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
+}
+
+void App_Therapy_StartBiofeedbackBreath(uint8_t timer_min, uint8_t volume, uint8_t ble_en)
+{
+    App_Therapy_SetTimerMin(timer_min);
+    App_Therapy_SetVolume(volume);
+    App_Therapy_SetBleEnable(ble_en);
+
+    g_app.Breath_Mode = BREATH_MODE_BIOFEEDBACK;
+    g_app.Stim_Mode   = STIM_MODE_OFF;
+
+    if (!Algo_Breath_IsBioCalibReady())
+    {
+        Algo_Breath_ResetBioCalib();
+        g_app.guide_bpm = 10U;
+    }
+    else
+    {
+        g_app.guide_bpm = Algo_Breath_GetBioGBPM();
+    }
+
+    g_app.active_elapsed_ms = 0U;
+    g_app.running = 1U;
+    g_app.paused  = 0U;
+    g_app.sys_state = APP_STATE_RUNNING;
+
+    Algo_Breath_StartGuide(g_app.guide_bpm);
+    BSP_Stim_SetComboOverride(0U, 0U, 1U);
+    BSP_Stim_Enable(0U);
+
+    BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
+}
+
+void App_Therapy_StartPureStim(uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, uint8_t ch2, uint8_t ch3, uint8_t timer_min)
+{
+    g_app.Breath_Mode = BREATH_MODE_OFF;
+    switch (mode_sel)
+    {
+        case 0U: g_app.Stim_Mode = STIM_MODE_CONTINUOUS; break;
+        case 1U: g_app.Stim_Mode = STIM_MODE_INTERMITTENT; break;
+        case 2U: g_app.Stim_Mode = STIM_MODE_DENSE_DISPERSE; break;
+        default: g_app.Stim_Mode = STIM_MODE_CONTINUOUS; break;
+    }
+
+    App_Therapy_SetStimFreq(freq_hz);
+    App_Therapy_SetStimLevel(0U, ch1);
+    App_Therapy_SetStimLevel(1U, ch2);
+    App_Therapy_SetStimLevel(2U, ch3);
+    App_Therapy_SetTimerMin(timer_min);
+
+    if (!therapy_can_start())
+    {
+        return;
+    }
+
+    g_app.active_elapsed_ms = 0U;
+    g_app.running = 1U;
+    g_app.paused  = 0U;
+    g_app.sys_state = APP_STATE_RUNNING;
+
+    Algo_Breath_StopGuide();
+    BSP_Screen_SetLungFill(0U);
+    BSP_Screen_SetBreathArrow(0U);
+
+    sync_stimulator_params();
+    BSP_Stim_SetComboOverride(0U, 1U, g_app.stim_freq_hz ? g_app.stim_freq_hz : 1U);
+    BSP_Stim_Enable(1U);
+
+    BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
+}
+
+void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, uint8_t ch2, uint8_t ch3, uint8_t timer_min)
+{
+    g_app.Breath_Mode = (breath_mode == 1U) ? BREATH_MODE_BIOFEEDBACK : BREATH_MODE_SIMPLE;
+    switch (mode_sel)
+    {
+        case 0U: g_app.Stim_Mode = STIM_MODE_CONTINUOUS; break;
+        case 1U: g_app.Stim_Mode = STIM_MODE_INTERMITTENT; break;
+        case 2U: g_app.Stim_Mode = STIM_MODE_DENSE_DISPERSE; break;
+        default: g_app.Stim_Mode = STIM_MODE_CONTINUOUS; break;
+    }
+
+    App_Therapy_SetStimFreq(freq_hz);
+    App_Therapy_SetStimLevel(0U, ch1);
+    App_Therapy_SetStimLevel(1U, ch2);
+    App_Therapy_SetStimLevel(2U, ch3);
+    App_Therapy_SetTimerMin(timer_min);
+
+    if (!therapy_can_start())
+    {
+        return;
+    }
+
+    g_app.active_elapsed_ms = 0U;
+    g_app.running = 1U;
+    g_app.paused  = 0U;
+    g_app.sys_state = APP_STATE_RUNNING;
+
+    if (g_app.Breath_Mode == BREATH_MODE_BIOFEEDBACK)
+    {
+        g_app.guide_bpm = Algo_Breath_IsBioCalibReady() ? Algo_Breath_GetBioGBPM() : 10U;
+    }
+    else
+    {
+        g_app.guide_bpm = 10U;
+    }
+    Algo_Breath_StartGuide(g_app.guide_bpm);
+
+    sync_stimulator_params();
+    BSP_Stim_SetComboOverride(1U, 1U, g_app.stim_freq_hz ? g_app.stim_freq_hz : 1U);
+    BSP_Stim_Enable(1U);
+
+    BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
 }
 
 void App_Therapy_StopToMenu(void)
@@ -334,12 +494,45 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
         Algo_Breath_FeedSample(raw_breath, now_ms);
         g_app.real_cbpm = Algo_Breath_GetRealCBPM();
 
-        if (g_app.sys_state == APP_STATE_BIO_CALIB && Algo_Breath_IsBioCalibReady())
+        if (g_app.sys_state == APP_STATE_BIO_CALIB)
         {
-            g_app.guide_bpm = Algo_Breath_GetBioGBPM();
-            g_app.sys_state = APP_STATE_READY;
-            BSP_Screen_SetGuideBPM(g_app.guide_bpm);
-            BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_RESULT);
+            if (Algo_Breath_IsBioCalibReady())
+            {
+                g_app.guide_bpm = Algo_Breath_GetBioGBPM();
+                g_app.sys_state = APP_STATE_READY;
+                BSP_Screen_SetGuideBPM(g_app.guide_bpm);
+                BSP_Audio_PlayBioResult(g_app.guide_bpm);
+            }
+            else
+            {
+                /* 检查 0007 播完后 5 秒无呼吸信号重试机制（最多重复播 3 次） */
+                uint8_t busy = BSP_Audio_IsBusy();
+                if (s_bio_busy_prev && !busy)
+                {
+                    s_bio_wait_5s = 1U;
+                    s_bio_calib_tick = now_ms;
+                }
+                s_bio_busy_prev = busy;
+
+                if (s_bio_wait_5s && ((now_ms - s_bio_calib_tick) >= 5000U))
+                {
+                    s_bio_wait_5s = 0U;
+                    if (s_bio_calib_repeat < 3U)
+                    {
+                        s_bio_calib_repeat++;
+                        BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_CALIB);
+                        s_bio_busy_prev = 1U;
+                    }
+                    else
+                    {
+                        /* 3次引导后仍未检测到有效呼吸信号，回退默认 5次/分 并播报 0013 */
+                        g_app.guide_bpm = 5U;
+                        g_app.sys_state = APP_STATE_READY;
+                        BSP_Screen_SetGuideBPM(5U);
+                        BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_FALLBACK);
+                    }
+                }
+            }
         }
     }
 
@@ -398,7 +591,7 @@ void App_Therapy_MainTick10ms(uint32_t now_ms)
             BSP_Screen_SetLungFill(0U);
             BSP_Screen_SetBreathArrow(0U);
             BSP_Screen_ShowFinished(g_app.timer_min);
-            BSP_Audio_PlayVoice(AUDIO_VOICE_TREAT_END);
+            BSP_Audio_PlayTreatEnd(g_app.timer_min);
 
             {
                 StorageSessionRecord_t rec;

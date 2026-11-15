@@ -22,6 +22,6 @@
     "Codegeex.RepoIndex": true,
     "editor.mouseWheelZoom": true,
 
-    "cmake.sourceDirectory": "D:/Desktop/淘晶驰/Breath/Drivers/CMSIS/NN",
+    "cmake.sourceDirectory": "C:/Users/Administrator/Desktop/淘晶驰git/Breath/Drivers/CMSIS/NN",
     "cmake.autoDetectSourceDirectory": false
 }

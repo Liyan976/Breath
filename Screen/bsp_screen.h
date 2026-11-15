@@ -28,7 +28,9 @@ extern "C" {
  * ========================================================================== */
 
 /** @defgroup 串口屏帧头定义 */
-#define SCREEN_FRAME_HDR_CTRL   0x05U   /**< 自定义三级控制帧帧头：[0x05][page][control][value] */
+#define SCREEN_FRAME_HDR_CTRL   0x05U   /**< 自定义控制帧帧头：[0x05][page][control][value] */
+#define SCREEN_FRAME_HDR_CUSTOM 0xA5U   /**< 紧凑自定义帧帧头：[0xA5][page][action/cmd][params...][0x5A] */
+#define SCREEN_FRAME_TAIL_CUSTOM 0x5AU  /**< 紧凑自定义帧帧尾 */
 #define SCREEN_FRAME_HDR_TOUCH  0x65U   /**< 原生触摸事件帧头：[0x65][page][comp_id][event] */
 #define SCREEN_FRAME_HDR_PAGE   0x66U   /**< 原生当前页码返回帧头：[0x66][page] */
 #define SCREEN_FRAME_HDR_STR    0x70U   /**< 原生字符串返回帧头：[0x70][ASCII...] */
@@ -37,15 +39,29 @@ extern "C" {
 #define SCREEN_FRAME_MAX_DATA   48U     /**< 单帧有效载荷最大字节数（不含3字节0xFF帧尾） */
 
 /**
- * @brief 串口屏页面编号枚举（对应 0x05 [page] [control] [value] 协议中的 page 字段）
+ * @brief 串口屏页面编号定义（严格对应上位机 15 个完整界面：Page 0 ~ Page 14）
  */
 typedef enum {
-    SCREEN_PAGE_START       = 0x00U, /**< 主菜单页：选择呼吸训练 / 单纯电刺激 / 联合模式 */
-    SCREEN_PAGE_BREATH_SEL  = 0x01U, /**< 呼吸子模式选择页：简易治疗 / 生物反馈 */
-    SCREEN_PAGE_STIM_SEL    = 0x02U, /**< 电刺激波形选择页：连续波 / 断续波 / 疏密波 */
-    SCREEN_PAGE_TREAT_RUN   = 0x03U, /**< 治疗就绪/运行/暂停页：启停、参数显示与强度调节 */
-    SCREEN_PAGE_SETTINGS    = 0x04U, /**< 系统设置页：音量、定时时长、蓝牙开关 */
-    SCREEN_PAGE_END         = 0x05U  /**< 治疗结束结算页：显示本次有效治疗时长 */
+    /* 1. 模式选择与主菜单页面 */
+    SCREEN_PAGE_START         = 0x00U, /**< page 0:  start (主界面/欢迎页) */
+    SCREEN_PAGE_ELECMODE      = 0x01U, /**< page 1:  elecmode (电刺激模式选择：连续/断续/疏密) */
+    SCREEN_PAGE_BREATHMODE    = 0x02U, /**< page 2:  breathmode (呼吸引导模式选择：简易/生物反馈) */
+    SCREEN_PAGE_LIANHEMODE1   = 0x03U, /**< page 3:  lianhemode1 (联合模式第1步：选呼吸模式) */
+    SCREEN_PAGE_LIANHEMODE2   = 0x0AU, /**< page 10: lianhemode2 (联合模式第2步：选电刺激波形) */
+
+    /* 2. 5 个测量/运行页面（带开始/暂停 b1 与返回 b2） */
+    SCREEN_PAGE_JIANYI        = 0x04U, /**< page 4:  jianyi (单纯简易呼吸测量运行) */
+    SCREEN_PAGE_JIANYIELEC    = 0x06U, /**< page 6:  jianyielec (简易呼吸 + 电刺激联合测量运行) */
+    SCREEN_PAGE_FANKUI        = 0x07U, /**< page 7:  fankui (单纯生物反馈呼吸测量运行) */
+    SCREEN_PAGE_FANKUIELEC    = 0x09U, /**< page 9:  fankuielec (生物反馈 + 电刺激联合测量运行) */
+    SCREEN_PAGE_ELEC          = 0x0BU, /**< page 11: elec (单独电刺激治疗测量运行) */
+
+    /* 3. 5 个参数设置页面 */
+    SCREEN_PAGE_JIANYISET     = 0x05U, /**< page 5:  jianyiset (简易呼吸参数设置) */
+    SCREEN_PAGE_FANKUISET     = 0x08U, /**< page 8:  fankuiset (生物反馈呼吸参数设置) */
+    SCREEN_PAGE_ELECSET       = 0x0CU, /**< page 12: elecset (单纯电刺激参数设置) */
+    SCREEN_PAGE_LIANHESET1    = 0x0DU, /**< page 13: lianheset1 (联合简易参数设置) */
+    SCREEN_PAGE_LIANHESET2    = 0x0EU  /**< page 14: lianheset2 (联合反馈参数设置) */
 } ScreenPageId_t;
 
 /**
@@ -69,6 +85,7 @@ uint32_t BSP_Screen_GetRxOverflowCount(void);
 
 /* ================= 底层串口屏指令发送接口 ================= */
 void     BSP_Screen_SendRawCmd(const char *cmd);
+void     BSP_Screen_SendRawBytes(const uint8_t *data, uint16_t len);
 void     BSP_Screen_Printf(const char *format, ...);
 void     BSP_Screen_SetNum(const char *obj, const char *attr, int32_t val);
 void     BSP_Screen_SetText(const char *obj, const char *attr, const char *txt);

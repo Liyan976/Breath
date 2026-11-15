@@ -20,6 +20,13 @@ static uint8_t  s_rx_len = 0U;
 static uint8_t  s_last_ack_cmd = 0U;
 static uint8_t  s_online = 0U;
 
+#define AUDIO_QUEUE_MAX     8U
+static uint16_t s_play_queue[AUDIO_QUEUE_MAX];
+static uint8_t  s_queue_cnt = 0U;
+static uint8_t  s_queue_tail = 0U;
+static uint32_t s_track_play_tick = 0U;
+static uint8_t  s_busy_prev = 0U;
+
 static void audio_send_bytes(const uint8_t *buf, uint16_t len)
 {
     HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, 50U);
@@ -106,6 +113,30 @@ void BSP_Audio_Poll(void)
             s_rx_len = 0U;
         }
     }
+
+    /* 链式多段语音连续播放调度 */
+    if (s_queue_cnt > 0U)
+    {
+        uint32_t now = HAL_GetTick();
+        uint8_t busy = BSP_Audio_IsBusy();
+
+        /* 开始播放后至少经过 200ms 防抖才检测 busy 变为空闲，或超时 4000ms 兜底切下一首 */
+        if ((now - s_track_play_tick) > 200U)
+        {
+            if ((s_busy_prev && !busy) || ((now - s_track_play_tick) > 4000U))
+            {
+                s_queue_tail = (uint8_t)((s_queue_tail + 1U) % AUDIO_QUEUE_MAX);
+                s_queue_cnt--;
+                if (s_queue_cnt > 0U)
+                {
+                    BSP_Audio_PlayTrack(s_play_queue[s_queue_tail]);
+                    s_track_play_tick = now;
+                    s_busy_prev = 1U;
+                }
+            }
+        }
+        s_busy_prev = busy;
+    }
 }
 
 void BSP_Audio_SetVolume(uint8_t ui_vol_0_to_10)
@@ -134,11 +165,60 @@ void BSP_Audio_PlayTrack(uint16_t track_id)
 
 void BSP_Audio_PlayVoice(AudioVoiceId_t id)
 {
+    s_queue_cnt = 0U;
     BSP_Audio_PlayTrack((uint16_t)id);
+}
+
+void BSP_Audio_PlayQueue(const uint16_t *tracks, uint8_t count)
+{
+    uint8_t i;
+    if (tracks == NULL || count == 0U) return;
+    if (count > AUDIO_QUEUE_MAX) count = AUDIO_QUEUE_MAX;
+
+    s_queue_cnt  = 0U;
+    s_queue_tail = 0U;
+
+    for (i = 0U; i < count; i++)
+    {
+        s_play_queue[i] = tracks[i];
+    }
+    s_queue_cnt  = count;
+    s_queue_tail = 0U;
+
+    BSP_Audio_PlayTrack(s_play_queue[0]);
+    s_track_play_tick = HAL_GetTick();
+    s_busy_prev = 1U;
+}
+
+void BSP_Audio_PlayBioResult(uint8_t bpm)
+{
+    uint16_t seq[3];
+    if (bpm < 5U) bpm = 5U;
+    if (bpm > 10U) bpm = 10U;
+
+    seq[0] = (uint16_t)AUDIO_VOICE_BIO_PREFIX;               /* 0008: "本次你的起始呼吸引导频率为" */
+    seq[1] = AUDIO_TRACK_FREQ_BASE + (uint16_t)(bpm - 5U);  /* 0014 ~ 0019: "xx次每分钟" */
+    seq[2] = (uint16_t)AUDIO_VOICE_CLICK_START_PROMPT;       /* 0009: "请点击启停键或右下角设置按钮设置好参数后开启治疗" */
+
+    BSP_Audio_PlayQueue(seq, 3U);
+}
+
+void BSP_Audio_PlayTreatEnd(uint8_t timer_min)
+{
+    uint16_t seq[3];
+    if (timer_min < 5U) timer_min = 5U;
+    if (timer_min > 30U) timer_min = 30U;
+
+    seq[0] = (uint16_t)AUDIO_VOICE_TREAT_END_PREFIX;            /* 0010: "本次治疗结束，有效时长为" */
+    seq[1] = AUDIO_TRACK_TIME_BASE + (uint16_t)(timer_min - 5U); /* 0020 ~ 0045: "xx分钟" */
+    seq[2] = (uint16_t)AUDIO_VOICE_POWER_OFF_PROMPT;            /* 0012: "本次治疗结束，请关闭仪器" */
+
+    BSP_Audio_PlayQueue(seq, 3U);
 }
 
 void BSP_Audio_Stop(void)
 {
+    s_queue_cnt = 0U;
 #if AUDIO_USE_N9300_STD_FRAME
     n9300_send_cmd(0x0EU, 0U, 0U, 0U); /* 0x0E: Stop playback */
 #else
@@ -158,7 +238,8 @@ void BSP_Audio_Pause(void)
 
 uint8_t BSP_Audio_IsBusy(void)
 {
-    return (HAL_GPIO_ReadPin(AUDIO_BUSY_GPIO_Port, AUDIO_BUSY_Pin) == GPIO_PIN_SET) ? 1U : 0U;
+    /* N9300 Pin 16 BUSY: 播放时输出低电平(RESET)，空闲时输出高电平(SET) */
+    return (HAL_GPIO_ReadPin(AUDIO_BUSY_GPIO_Port, AUDIO_BUSY_Pin) == GPIO_PIN_RESET) ? 1U : 0U;
 }
 
 uint8_t BSP_Audio_IsHeadphoneInserted(void)

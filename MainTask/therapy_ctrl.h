@@ -18,8 +18,16 @@ void App_Therapy_SelectStimMode(StimMode_t mode);
 void App_Therapy_EnterSettings(void);
 void App_Therapy_ReturnFromSettings(void);
 void App_Therapy_StartOrPause(void);
+void App_Therapy_Pause(void);
+void App_Therapy_Resume(void);
 void App_Therapy_StopToMenu(void);
 void App_Therapy_PowerOffRequest(void);
+
+/* Direct mode launch handlers from HMI Start Button (page-specific parameter packet) */
+void App_Therapy_StartSimpleBreath(uint8_t timer_min, uint8_t volume, uint8_t ble_en);
+void App_Therapy_StartBiofeedbackBreath(uint8_t timer_min, uint8_t volume, uint8_t ble_en);
+void App_Therapy_StartPureStim(uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, uint8_t ch2, uint8_t ch3, uint8_t timer_min);
+void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, uint8_t ch2, uint8_t ch3, uint8_t timer_min);
 
 /* Parameter setters (called from ScreenTask & BleTask) */
 void App_Therapy_SetVolume(uint8_t vol_0_to_10);

@@ -9,219 +9,259 @@
 #include "bsp_power.h"
 #include "therapy_ctrl.h"
 #include "cmsis_os.h"
+#include <string.h>
 
 /**
- * @brief  处理自定义 0x05 控制帧（三级 switch-case 分发：页面 -> 控件 -> 参数/动作值）
- * @param  page: 页面编号（ScreenPageId_t，如 0x00 主菜单、0x01 呼吸选择等）
- * @param  control: 当前页面内的控件或功能编号
- * @param  value: 按键动作码或滑块/步进器携带的数值
+ * @brief  统一处理 0x05 上行控制/启动/页面事件帧（按 15 个页面枚举清晰分发）
+ * @param  frame: 解析出的完整数据帧（header 固定为 0x05）
  * @retval 无
  */
-static void Screen_HandleCtrlFrame(uint8_t page, uint8_t control, uint8_t value)
+static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
 {
-    /* 第一级 switch：按页面编号分发 */
+    if (frame == NULL || frame->len < 3U) return;
+
+    uint8_t page   = frame->page;       /* raw[1]: 页面号 (0~14，ScreenPageId_t) */
+    uint8_t action = frame->control;    /* raw[2]: 动作码 (0x01启动, 0x00暂停, 0x02返回, 0x08页面就绪, 0x10音量, 0x11蓝牙) */
+
     switch (page)
     {
-        case SCREEN_PAGE_START: /* 0x00: 开机主菜单界面 */
-        {
-            /* 第二级 switch：按主菜单控件编号分发 */
-            switch (control)
+        /* ================= 1. 模式选择与主菜单页面 ================= */
+        case SCREEN_PAGE_START: /* Page 0: start (主界面/开机欢迎页) */
+            if (action == 0x08U)
             {
-                case 0x01U: /* 按键1：呼吸训练模式 */
-                {
-                    /* 第三级 switch：按动作值分发 */
-                    switch (value)
-                    {
-                        case 0x01U:
-                            App_Therapy_EnterBreathMenu(0U); /* 仅呼吸训练，关闭电刺激 */
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                }
-                case 0x02U: /* 按键2：单纯电刺激模式 */
-                {
-                    switch (value)
-                    {
-                        case 0x01U:
-                            App_Therapy_EnterStimMenu();     /* 仅电刺激，关闭呼吸引导 */
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                }
-                case 0x03U: /* 按键3：呼吸+电刺激联合模式 */
-                {
-                    switch (value)
-                    {
-                        case 0x01U:
-                            App_Therapy_EnterBreathMenu(1U); /* 联合模式：先选呼吸子模式再选电刺激波形 */
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                }
-                default:
-                    break;
+                BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME); /* 0001: 欢迎使用呼吸调控仪... */
             }
             break;
-        }
 
-        case SCREEN_PAGE_BREATH_SEL: /* 0x01: 呼吸引导子模式选择界面 */
-        {
-            switch (control)
+        case SCREEN_PAGE_ELECMODE:    /* Page 1:  elecmode (电刺激模式选择：连续/断续/疏密) */
+        case SCREEN_PAGE_LIANHEMODE2: /* Page 10: lianhemode2 (联合模式第2步：选电刺激) */
+            if (action == 0x08U)
             {
-                case 0x01U: /* 简易治疗模式（10->5 次/分固定阶梯递减） */
+                BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_STIM_MODE); /* 0011: 请选择电刺激模式 */
+            }
+            break;
+
+        case SCREEN_PAGE_BREATHMODE:  /* Page 2:  breathmode (呼吸引导模式选择：简易/生物反馈) */
+            if (action == 0x08U)
+            {
+                /* 底层收发联调测试：收到 05 02 08 FF FF FF 以后，向串口回发 05 02 01 01 FF FF FF */
+                static const uint8_t s_test_ack[7] = {0x05U, 0x02U, 0x01U, 0x01U, 0xFFU, 0xFFU, 0xFFU};
+                BSP_Screen_SendRawBytes(s_test_ack, 7U);
+
+                BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_BREATH_MODE); /* 0002: 请选择呼吸引导模式 */
+            }
+            break;
+
+        case SCREEN_PAGE_LIANHEMODE1: /* Page 3:  lianhemode1 (联合模式第1步：选呼吸引导) */
+            if (action == 0x08U)
+            {
+                BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_BREATH_MODE); /* 0002: 请选择呼吸引导模式 */
+            }
+            break;
+
+        /* ================= 2. 5 个治疗测量与运行页面 ================= */
+        case SCREEN_PAGE_JIANYI: /* Page 4: jianyi (单纯简易呼吸引导测量运行) */
+            if (action == 0x08U) /* 刚进页面：提示请点击启停键开启治疗 */
+            {
+                BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009: 请点击启停键... */
+            }
+            else if (action == 0x01U) /* 启动 / 继续 */
+            {
+                if (g_app.sys_state == APP_STATE_PAUSED)
                 {
-                    switch (value)
-                    {
-                        case 0x01U: /* 仅高亮选中（预留，可在屏幕端完成视觉高亮） */
-                            break;
-                        case 0x02U: /* 点击“下一页”确认进入 */
-                            App_Therapy_SelectBreathMode(BREATH_MODE_SIMPLE);
-                            if (g_app.Stim_Mode != STIM_MODE_OFF)
-                            {
-                                /* 联合模式下，下一步进入电刺激波形选择提示 */
-                                BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_STIM_MODE);
-                            }
-                            else
-                            {
-                                /* 单纯呼吸模式直接刷新右侧参数展示 */
-                                BSP_Screen_SetGuideBPM(10U);
-                                BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
+                    App_Therapy_Resume();
                 }
-                case 0x02U: /* 生物反馈模式（实时检测呼吸波谷自动调整 GBPM） */
+                else if (frame->len >= 6U)
                 {
-                    switch (value)
-                    {
-                        case 0x01U: /* 仅高亮选中 */
-                            break;
-                        case 0x02U: /* 点击“下一页”确认并开始 3 次呼吸初始校准 */
-                            App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
+                    uint8_t timer_min = frame->raw[3];
+                    uint8_t volume    = frame->raw[4];
+                    uint8_t ble_en    = frame->raw[5];
+                    App_Therapy_StartSimpleBreath(timer_min, volume, ble_en);
                 }
-                case 0x0FU: /* 返回主菜单 */
+                else
                 {
-                    if (value == 0x01U)
-                    {
-                        App_Therapy_StopToMenu();
-                    }
-                    break;
+                    App_Therapy_StartOrPause();
                 }
-                default:
-                    break;
+            }
+            else if (action == 0x00U) /* 暂停 */
+            {
+                App_Therapy_Pause();
+            }
+            else if (action == 0x02U || action == 0x0FU) /* 返回主页 */
+            {
+                App_Therapy_StopToMenu();
             }
             break;
-        }
 
-        case SCREEN_PAGE_STIM_SEL: /* 0x02: 电刺激波形选择界面 */
-        {
-            switch (control)
+        case SCREEN_PAGE_JIANYIELEC: /* Page 6: jianyielec (简易呼吸 + 电刺激联合测量运行) */
+            if (action == 0x08U)
             {
-                case 0x01U: /* 连续波 */
-                    if (value == 0x01U) App_Therapy_SelectStimMode(STIM_MODE_CONTINUOUS);
-                    break;
-                case 0x02U: /* 断续波（联合模式下吸气疏波、呼气密波） */
-                    if (value == 0x01U) App_Therapy_SelectStimMode(STIM_MODE_INTERMITTENT);
-                    break;
-                case 0x03U: /* 疏密波（联合模式下吸气刺激、呼气暂停） */
-                    if (value == 0x01U) App_Therapy_SelectStimMode(STIM_MODE_DENSE_DISPERSE);
-                    break;
-                case 0x0FU: /* 返回主菜单 */
-                    if (value == 0x01U) App_Therapy_StopToMenu();
-                    break;
-                default:
-                    break;
+                BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009 */
             }
-            /* 选定波形后立即同步回显当前频率、三路强度及系统设置 */
-            if (control >= 0x01U && control <= 0x03U && value == 0x01U)
+            else if (action == 0x01U) /* 启动 / 继续 */
             {
-                BSP_Screen_SetStimParams(g_app.stim_freq_hz, g_app.stim_level);
-                BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
+                if (g_app.sys_state == APP_STATE_PAUSED)
+                {
+                    App_Therapy_Resume();
+                }
+                else if (frame->len >= 9U)
+                {
+                    uint8_t offset    = (frame->len >= 10U) ? 1U : 0U;
+                    uint8_t mode_sel  = frame->raw[3U + offset];
+                    uint8_t freq_hz   = frame->raw[4U + offset];
+                    uint8_t ch1       = frame->raw[5U + offset];
+                    uint8_t ch2       = frame->raw[6U + offset];
+                    uint8_t ch3       = frame->raw[7U + offset];
+                    uint8_t timer_min = frame->raw[8U + offset];
+                    App_Therapy_StartCombo(0U /* 简易呼吸 */, mode_sel, freq_hz, ch1, ch2, ch3, timer_min);
+                }
+                else
+                {
+                    App_Therapy_StartOrPause();
+                }
+            }
+            else if (action == 0x00U)
+            {
+                App_Therapy_Pause();
+            }
+            else if (action == 0x02U || action == 0x0FU)
+            {
+                App_Therapy_StopToMenu();
             }
             break;
-        }
 
-        case SCREEN_PAGE_TREAT_RUN: /* 0x03: 治疗就绪 / 运行 / 暂停界面 */
-        {
-            switch (control)
+        case SCREEN_PAGE_FANKUI: /* Page 7: fankui (单纯生物反馈呼吸测量运行) */
+            if (action == 0x08U) /* 刚进页面：自动启动呼吸传感器采集并播报 0007 引导呼吸 */
             {
-                case 0x01U: /* 启停按键（运行 <-> 暂停/启动） */
-                    if (value == 0x01U) App_Therapy_StartOrPause();
-                    break;
-                case 0x02U: /* 返回按键（治疗运行中将被状态机拦截提示） */
-                    if (value == 0x01U) App_Therapy_StopToMenu();
-                    break;
-                case 0x03U: /* 设置按键（仅暂停或未开始时允许进入设置页） */
-                    if (value == 0x01U) App_Therapy_EnterSettings();
-                    break;
-                case 0x10U: /* 电刺激频率调节：value = 0~100 Hz */
-                    App_Therapy_SetStimFreq(value);
-                    break;
-                case 0x11U: /* 通道1强度调节：value = 0~10 档 */
-                    App_Therapy_SetStimLevel(0U, value);
-                    break;
-                case 0x12U: /* 通道2强度调节：value = 0~10 档 */
-                    App_Therapy_SetStimLevel(1U, value);
-                    break;
-                case 0x13U: /* 通道3强度调节：value = 0~10 档 */
-                    App_Therapy_SetStimLevel(2U, value);
-                    break;
-                default:
-                    break;
+                App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
+            }
+            else if (action == 0x01U) /* 启动 / 继续 */
+            {
+                if (g_app.sys_state == APP_STATE_PAUSED)
+                {
+                    App_Therapy_Resume();
+                }
+                else if (frame->len >= 6U)
+                {
+                    uint8_t timer_min = frame->raw[3];
+                    uint8_t volume    = frame->raw[4];
+                    uint8_t ble_en    = frame->raw[5];
+                    App_Therapy_StartBiofeedbackBreath(timer_min, volume, ble_en);
+                }
+                else
+                {
+                    App_Therapy_StartOrPause();
+                }
+            }
+            else if (action == 0x00U)
+            {
+                App_Therapy_Pause();
+            }
+            else if (action == 0x02U || action == 0x0FU)
+            {
+                App_Therapy_StopToMenu();
             }
             break;
-        }
 
-        case SCREEN_PAGE_SETTINGS: /* 0x04: 参数设置界面 */
-        {
-            switch (control)
+        case SCREEN_PAGE_FANKUIELEC: /* Page 9: fankuielec (生物反馈呼吸 + 电刺激联合测量运行) */
+            if (action == 0x08U)
             {
-                case 0x01U: /* 音量调节：value = 0~10（0 为静音） */
-                    App_Therapy_SetVolume(value);
-                    break;
-                case 0x02U: /* 定时时长设置：value = 5~30 分钟 */
-                    App_Therapy_SetTimerMin(value);
-                    break;
-                case 0x03U: /* 蓝牙开关：value = 0 关闭 / 1 开启 */
-                    App_Therapy_SetBleEnable(value);
-                    break;
-                case 0x0FU: /* 返回治疗界面，同步回显设置值 */
-                    if (value == 0x01U) App_Therapy_ReturnFromSettings();
-                    break;
-                default:
-                    break;
+                App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
+            }
+            else if (action == 0x01U) /* 启动 / 继续 */
+            {
+                if (g_app.sys_state == APP_STATE_PAUSED)
+                {
+                    App_Therapy_Resume();
+                }
+                else if (frame->len >= 9U)
+                {
+                    uint8_t offset    = (frame->len >= 10U) ? 1U : 0U;
+                    uint8_t mode_sel  = frame->raw[3U + offset];
+                    uint8_t freq_hz   = frame->raw[4U + offset];
+                    uint8_t ch1       = frame->raw[5U + offset];
+                    uint8_t ch2       = frame->raw[6U + offset];
+                    uint8_t ch3       = frame->raw[7U + offset];
+                    uint8_t timer_min = frame->raw[8U + offset];
+                    App_Therapy_StartCombo(1U /* 反馈呼吸 */, mode_sel, freq_hz, ch1, ch2, ch3, timer_min);
+                }
+                else
+                {
+                    App_Therapy_StartOrPause();
+                }
+            }
+            else if (action == 0x00U)
+            {
+                App_Therapy_Pause();
+            }
+            else if (action == 0x02U || action == 0x0FU)
+            {
+                App_Therapy_StopToMenu();
             }
             break;
-        }
 
-        case SCREEN_PAGE_END: /* 0x05: 治疗结束结算界面 */
-        {
-            switch (control)
+        case SCREEN_PAGE_ELEC: /* Page 11: elec (单纯电刺激治疗测量运行) */
+            if (action == 0x08U)
             {
-                case 0x01U: /* 确认并返回主菜单 */
-                    if (value == 0x01U) App_Therapy_StopToMenu();
-                    break;
-                default:
-                    break;
+                BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009 */
+            }
+            else if (action == 0x01U) /* 启动 / 继续 */
+            {
+                if (g_app.sys_state == APP_STATE_PAUSED)
+                {
+                    App_Therapy_Resume();
+                }
+                else if (frame->len >= 8U)
+                {
+                    uint8_t mode_sel  = frame->raw[3]; /* 0:连续波, 1:断续波, 2:疏密波 */
+                    uint8_t freq_hz   = frame->raw[4]; /* 频率 (Hz) */
+                    uint8_t ch1       = frame->raw[5]; /* 通道1档位 (0~10) */
+                    uint8_t ch2       = frame->raw[6]; /* 通道2档位 (0~10) */
+                    uint8_t ch3       = frame->raw[7]; /* 通道3档位 (0~10) */
+                    uint8_t timer_min = (frame->len >= 9U) ? frame->raw[8] : 10U;
+                    App_Therapy_StartPureStim(mode_sel, freq_hz, ch1, ch2, ch3, timer_min);
+                }
+                else
+                {
+                    App_Therapy_StartOrPause();
+                }
+            }
+            else if (action == 0x00U)
+            {
+                App_Therapy_Pause();
+            }
+            else if (action == 0x02U || action == 0x0FU)
+            {
+                App_Therapy_StopToMenu();
             }
             break;
-        }
+
+        /* ================= 3. 5 个参数设置页面 ================= */
+        case SCREEN_PAGE_JIANYISET:  /* Page 5:  jianyiset (简易呼吸参数设置) */
+        case SCREEN_PAGE_FANKUISET:  /* Page 8:  fankuiset (生物反馈呼吸参数设置) */
+        case SCREEN_PAGE_ELECSET:    /* Page 12: elecset (单纯电刺激参数设置) */
+        case SCREEN_PAGE_LIANHESET1: /* Page 13: lianheset1 (联合简易参数设置) */
+        case SCREEN_PAGE_LIANHESET2: /* Page 14: lianheset2 (联合反馈参数设置) */
+            if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
+            {
+                App_Therapy_SetVolume(frame->raw[3]);
+            }
+            else if (action == 0x11U && frame->len >= 4U) /* 实时蓝牙开关 */
+            {
+                App_Therapy_SetBleEnable(frame->raw[3]);
+            }
+            break;
 
         default:
+            /* 全局参数调节兜底 */
+            if (action == 0x10U && frame->len >= 4U)
+            {
+                App_Therapy_SetVolume(frame->raw[3]);
+            }
+            else if (action == 0x11U && frame->len >= 4U)
+            {
+                App_Therapy_SetBleEnable(frame->raw[3]);
+            }
             break;
     }
 }
@@ -235,9 +275,22 @@ static void Screen_HandleCtrlFrame(uint8_t page, uint8_t control, uint8_t value)
  */
 static void Screen_HandleTouchFrame(uint8_t page, uint8_t comp_id, uint8_t event)
 {
+    ScreenFrame_t fake;
     /* 仅响应弹起事件（0x00），避免按下期间重复触发 */
     if (event != 0x00U) return;
-    Screen_HandleCtrlFrame(page, comp_id, 0x01U);
+
+    memset(&fake, 0, sizeof(fake));
+    fake.header  = SCREEN_FRAME_HDR_CTRL;
+    fake.page    = page;
+    fake.control = comp_id;
+    fake.value   = 0x01U;
+    fake.len     = 4U;
+    fake.raw[0]  = 0x05U;
+    fake.raw[1]  = page;
+    fake.raw[2]  = comp_id;
+    fake.raw[3]  = 0x01U;
+
+    Screen_HandleCtrlFrame(&fake);
 }
 
 /**
@@ -263,24 +316,19 @@ void ScreenTask(void const *argument)
         /* 1. 排空并解析所有以 0xFF 0xFF 0xFF 结尾的完整上行数据帧 */
         while (BSP_Screen_ReadFrame(&frame))
         {
-            switch (frame.header)
+            if (frame.header == SCREEN_FRAME_HDR_CTRL || frame.header == SCREEN_FRAME_HDR_CUSTOM)
             {
-                case SCREEN_FRAME_HDR_CTRL: /* 自定义协议帧：0x05 [page] [control] [value] */
-                    if (frame.len >= 4U)
-                    {
-                        Screen_HandleCtrlFrame(frame.page, frame.control, frame.value);
-                    }
-                    break;
-
-                case SCREEN_FRAME_HDR_TOUCH: /* 淘晶驰原生触摸帧：0x65 [page] [comp] [event] */
-                    if (frame.len >= 4U)
-                    {
-                        Screen_HandleTouchFrame(frame.page, frame.control, frame.value);
-                    }
-                    break;
-
-                default:
-                    break;
+                if (frame.len >= 3U)
+                {
+                    Screen_HandleCtrlFrame(&frame);
+                }
+            }
+            else if (frame.header == SCREEN_FRAME_HDR_TOUCH) /* 淘晶驰原生触摸帧兜底：0x65 [page] [comp] [event] */
+            {
+                if (frame.len >= 4U)
+                {
+                    Screen_HandleTouchFrame(frame.page, frame.control, frame.value);
+                }
             }
         }
 
