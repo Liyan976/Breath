@@ -367,6 +367,10 @@ void ScreenTask(void const *argument)
 
     osDelay(50U);
 
+    /* 启动初期显式关闭屏幕休眠与自动休眠定时器，确保屏幕始终常亮不熄屏 */
+    BSP_Screen_SendRawCmd("sleep=0");
+    BSP_Screen_SendRawCmd("usleep=0");
+
     for (;;)
     {
         /* 1. 排空并解析所有以 0xFF 0xFF 0xFF 结尾的完整上行数据帧 */

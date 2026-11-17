@@ -128,6 +128,10 @@ void App_Therapy_Init(void)
     BSP_Storage_Init();
     Algo_Breath_Init();
 
+    /* 明确关闭所有休眠指令与自动休眠定时器，确保屏幕常亮不熄屏 */
+    BSP_Screen_SendRawCmd("sleep=0");
+    BSP_Screen_SendRawCmd("usleep=0");
+
     BSP_Audio_SetVolume(g_app.volume);
     BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME);
     BSP_Screen_SetBattery(BSP_Power_GetBatteryPercent());
@@ -573,7 +577,7 @@ void App_Therapy_StopToMenu(void)
 
 void App_Therapy_PowerOffRequest(void)
 {
-    BSP_Screen_SendRawCmd("sleep=1"); /* 串口屏立即熄屏休眠 */
+    /* 用户明确要求：关闭所有 sleep 指令，不向串口屏发送任何熄屏休眠指令 */
     BSP_Stim_EmergencyStop();
     BSP_Audio_Stop();
     if (g_app.active_elapsed_ms > 0U && g_app.sys_state != APP_STATE_FINISHED)
