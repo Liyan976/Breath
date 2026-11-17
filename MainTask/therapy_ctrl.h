@@ -3,12 +3,18 @@
 
 #include "app_types.h"
 #include "bsp_ble.h"
+#include "bsp_screen.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void App_Therapy_Init(void);
+
+/* Paused session management */
+uint8_t App_Therapy_GetPausedPage(void);
+uint8_t App_Therapy_IsPausedInPage(uint8_t page);
+void    App_Therapy_ClearPausedSession(void);
 
 /* Menu & mode selection handlers (called from ScreenTask switch-case) */
 void App_Therapy_EnterBreathMenu(uint8_t is_combo);

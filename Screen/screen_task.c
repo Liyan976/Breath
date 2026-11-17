@@ -23,6 +23,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
     uint8_t page   = frame->page;       /* raw[1]: 页面号 (0~14，ScreenPageId_t) */
     uint8_t action = frame->control;    /* raw[2]: 动作码 (0x01启动, 0x00暂停, 0x02返回, 0x08页面就绪, 0x10音量, 0x11蓝牙) */
 
+    BSP_Screen_SetCurrentPage(page);
+
     switch (page)
     {
         /* ================= 1. 模式选择与主菜单页面 ================= */
@@ -61,26 +63,35 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
 
         /* ================= 2. 5 个治疗测量与运行页面 ================= */
         case SCREEN_PAGE_JIANYI: /* Page 4: jianyi (单纯简易呼吸引导测量运行) */
-            if (action == 0x08U) /* 刚进页面：提示请点击启停键开启治疗 */
+            if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_JIANYI))
+                {
+                    /* 之前在简易治疗中暂停过，恢复显示之前的剩余时间与频率 */
+                    uint32_t total_s = (uint32_t)g_app.timer_min * 60U;
+                    uint32_t elap_s  = g_app.active_elapsed_ms / 1000U;
+                    uint16_t rem_s   = (total_s > elap_s) ? (uint16_t)(total_s - elap_s) : 0U;
+                    BSP_Screen_SetRemainTimeSec(rem_s);
+                    BSP_Screen_SetGuideBPM(g_app.guide_bpm);
+                    BSP_Screen_SetLungFill(0U);
+                    BSP_Screen_SetBreathArrow(0U);
+                }
                 BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009: 请点击启停键... */
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                if (g_app.sys_state == APP_STATE_PAUSED)
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_JIANYI))
                 {
+                    /* 同模式暂停后继续：时间不归零，从吸气0开始 */
                     App_Therapy_Resume();
-                }
-                else if (frame->len >= 6U)
-                {
-                    uint8_t timer_min = frame->raw[3];
-                    uint8_t volume    = frame->raw[4];
-                    uint8_t ble_en    = frame->raw[5];
-                    App_Therapy_StartSimpleBreath(timer_min, volume, ble_en);
                 }
                 else
                 {
-                    App_Therapy_StartOrPause();
+                    /* 启动新模式或从头开始：清空旧模式暂停数据，从头开始计时 */
+                    uint8_t timer_min = (frame->len >= 4U) ? frame->raw[3] : 10U;
+                    uint8_t volume    = (frame->len >= 5U) ? frame->raw[4] : 5U;
+                    uint8_t ble_en    = (frame->len >= 6U) ? frame->raw[5] : 0U;
+                    App_Therapy_StartSimpleBreath(timer_min, volume, ble_en);
                 }
             }
             else if (action == 0x00U) /* 暂停 */
@@ -96,11 +107,21 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYIELEC: /* Page 6: jianyielec (简易呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_JIANYIELEC))
+                {
+                    uint32_t total_s = (uint32_t)g_app.timer_min * 60U;
+                    uint32_t elap_s  = g_app.active_elapsed_ms / 1000U;
+                    uint16_t rem_s   = (total_s > elap_s) ? (uint16_t)(total_s - elap_s) : 0U;
+                    BSP_Screen_SetRemainTimeSec(rem_s);
+                    BSP_Screen_SetGuideBPM(g_app.guide_bpm);
+                    BSP_Screen_SetLungFill(0U);
+                    BSP_Screen_SetBreathArrow(0U);
+                }
                 BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009 */
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                if (g_app.sys_state == APP_STATE_PAUSED)
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_JIANYIELEC))
                 {
                     App_Therapy_Resume();
                 }
@@ -133,11 +154,25 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUI: /* Page 7: fankui (单纯生物反馈呼吸测量运行) */
             if (action == 0x08U) /* 刚进页面：自动启动呼吸传感器采集并播报 0007 引导呼吸 */
             {
-                App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_FANKUI))
+                {
+                    uint32_t total_s = (uint32_t)g_app.timer_min * 60U;
+                    uint32_t elap_s  = g_app.active_elapsed_ms / 1000U;
+                    uint16_t rem_s   = (total_s > elap_s) ? (uint16_t)(total_s - elap_s) : 0U;
+                    BSP_Screen_SetRemainTimeSec(rem_s);
+                    BSP_Screen_SetGuideBPM(g_app.guide_bpm);
+                    BSP_Screen_SetLungFill(0U);
+                    BSP_Screen_SetBreathArrow(0U);
+                    BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT);
+                }
+                else
+                {
+                    App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
+                }
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                if (g_app.sys_state == APP_STATE_PAUSED)
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_FANKUI))
                 {
                     App_Therapy_Resume();
                 }
@@ -166,11 +201,25 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUIELEC: /* Page 9: fankuielec (生物反馈呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_FANKUIELEC))
+                {
+                    uint32_t total_s = (uint32_t)g_app.timer_min * 60U;
+                    uint32_t elap_s  = g_app.active_elapsed_ms / 1000U;
+                    uint16_t rem_s   = (total_s > elap_s) ? (uint16_t)(total_s - elap_s) : 0U;
+                    BSP_Screen_SetRemainTimeSec(rem_s);
+                    BSP_Screen_SetGuideBPM(g_app.guide_bpm);
+                    BSP_Screen_SetLungFill(0U);
+                    BSP_Screen_SetBreathArrow(0U);
+                    BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT);
+                }
+                else
+                {
+                    App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
+                }
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                if (g_app.sys_state == APP_STATE_PAUSED)
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_FANKUIELEC))
                 {
                     App_Therapy_Resume();
                 }
@@ -203,11 +252,18 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_ELEC: /* Page 11: elec (单纯电刺激治疗测量运行) */
             if (action == 0x08U)
             {
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_ELEC))
+                {
+                    uint32_t total_s = (uint32_t)g_app.timer_min * 60U;
+                    uint32_t elap_s  = g_app.active_elapsed_ms / 1000U;
+                    uint16_t rem_s   = (total_s > elap_s) ? (uint16_t)(total_s - elap_s) : 0U;
+                    BSP_Screen_SetRemainTimeSec(rem_s);
+                }
                 BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009 */
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                if (g_app.sys_state == APP_STATE_PAUSED)
+                if (App_Therapy_IsPausedInPage(SCREEN_PAGE_ELEC))
                 {
                     App_Therapy_Resume();
                 }

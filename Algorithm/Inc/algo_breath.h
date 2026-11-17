@@ -41,6 +41,7 @@ void Algo_Breath_StepGuide(uint32_t dt_ms, uint8_t target_bpm, BreathGuideOut_t 
 uint8_t Algo_Breath_GetBioGBPM(void);
 uint8_t Algo_Breath_GetRealCBPM(void);
 uint8_t Algo_Breath_IsBioCalibReady(void);
+uint8_t Algo_Breath_IsSignalDetected(void);
 
 #ifdef __cplusplus
 }

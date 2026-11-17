@@ -38,6 +38,9 @@ extern "C" {
 
 #define SCREEN_FRAME_MAX_DATA   48U     /**< 单帧有效载荷最大字节数（不含3字节0xFF帧尾） */
 
+/** @defgroup 倒计时显示格式配置 */
+#define SCREEN_TIMER_FORMAT_MMSS 1      /**< 1: 秒级精准倒计时 "09:59"; 0: 传统整分钟 "10分钟" */
+
 /**
  * @brief 串口屏页面编号定义（严格对应上位机 15 个完整界面：Page 0 ~ Page 14）
  */
@@ -92,6 +95,8 @@ void     BSP_Screen_SetText(const char *obj, const char *attr, const char *txt);
 void     BSP_Screen_SetVisible(const char *obj, uint8_t visible);
 
 /* ================= 业务语义界面刷新接口 ================= */
+void     BSP_Screen_SetCurrentPage(uint8_t page_id);
+uint8_t  BSP_Screen_GetCurrentPage(void);
 void     BSP_Screen_SetPage(const char *page_name);
 void     BSP_Screen_SetLungFill(uint8_t pct_0_to_100);
 void     BSP_Screen_SetBreathArrow(uint8_t phase);

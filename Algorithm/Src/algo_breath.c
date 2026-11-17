@@ -13,8 +13,10 @@ static float    s_buf[BREATH_BUF_LEN];
 static uint32_t s_sample_cnt = 0U;
 static float    s_baseline = 0.0f;
 static float    s_lpf = 0.0f;
-static float    s_amp_env = 25.0f;
+static float    s_amp_env = 0.0f;
 static uint32_t s_last_valley_ms = 0U;
+static uint32_t s_now_ms = 0U;
+static uint32_t s_last_signal_ms = 0U;
 
 static float    s_cbpm_win[3] = {0.0f, 0.0f, 0.0f};
 static uint8_t  s_cbpm_win_idx = 0U;
@@ -93,7 +95,9 @@ void Algo_Breath_Init(void)
     s_sample_cnt = 0U;
     s_baseline = 0.0f;
     s_lpf = 0.0f;
-    s_amp_env = 25.0f;
+    s_amp_env = 0.0f;
+    s_now_ms = 0U;
+    s_last_signal_ms = 0U;
     s_last_valley_ms = 0U;
     s_bio_gbpm = 10U;
     s_real_cbpm = 0U;
@@ -107,12 +111,14 @@ void Algo_Breath_Init(void)
 
 void Algo_Breath_ResetBioCalib(void)
 {
+    s_last_signal_ms = 0U;
     s_last_valley_ms = 0U;
     s_cbpm_win_idx = 0U;
     s_cbpm_total = 0U;
     s_calib_ready = 0U;
     s_real_cbpm = 0U;
     s_bio_gbpm = 10U;
+    s_amp_env = 0.0f;
 }
 
 void Algo_Breath_FeedSample(uint16_t raw_adc, uint32_t now_ms)
@@ -125,6 +131,7 @@ void Algo_Breath_FeedSample(uint16_t raw_adc, uint32_t now_ms)
     float th;
     uint32_t n;
 
+    s_now_ms = now_ms;
     if (s_sample_cnt == 0U)
     {
         s_baseline = raw;
@@ -132,6 +139,12 @@ void Algo_Breath_FeedSample(uint16_t raw_adc, uint32_t now_ms)
     s_baseline = 0.98f * s_baseline + 0.02f * raw;
     ac = raw - s_baseline;
     s_lpf = 0.75f * s_lpf + 0.25f * ac;
+
+    /* 当检测到有效呼吸扰动幅度 (>= 6.0f) 或已成功检测到波谷时，刷新信号活跃时间戳 */
+    if (s_sample_cnt >= 25U && (fabsf(s_lpf) >= (VALLEY_AMP_MIN_THRESH * 1.5f) || s_cbpm_total > 0U))
+    {
+        s_last_signal_ms = now_ms;
+    }
 
     s_buf[s_sample_cnt % BREATH_BUF_LEN] = s_lpf;
     s_sample_cnt++;
@@ -273,4 +286,16 @@ uint8_t Algo_Breath_GetRealCBPM(void)
 uint8_t Algo_Breath_IsBioCalibReady(void)
 {
     return s_calib_ready;
+}
+
+uint8_t Algo_Breath_IsSignalDetected(void)
+{
+    if (s_sample_cnt >= 25U && s_last_signal_ms != 0U)
+    {
+        if ((s_now_ms - s_last_signal_ms) <= 4500U)
+        {
+            return 1U;
+        }
+    }
+    return 0U;
 }

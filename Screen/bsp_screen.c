@@ -30,6 +30,7 @@ static uint8_t  s_frame_len = 0U;                   /**< 当前已累计的字�
 static uint8_t  s_ff_cnt    = 0U;                   /**< 连续收到的 0xFF 计数 */
 
 static osMutexId s_tx_mutex = NULL;                 /**< 串口发送互斥锁（防止多任务指令混杂） */
+static uint8_t  s_current_screen_page = SCREEN_PAGE_JIANYI; /**< 当前屏幕活跃页面号，默认为简易治疗页 */
 
 /**
  * @brief  底层串口字节流发送函数（自动加锁保护多任务并发访问）
@@ -349,17 +350,54 @@ void BSP_Screen_SetBreathArrow(uint8_t phase)
 }
 
 /**
- * @brief  更新屏幕呼吸引导频率显示（start.breath_freq.val 与 gbpm.val）
+ * @brief  设置当前屏幕活跃页面编号
+ * @param  page_id: 页面枚举值 (ScreenPageId_t)
+ * @retval 无
+ */
+void BSP_Screen_SetCurrentPage(uint8_t page_id)
+{
+    s_current_screen_page = page_id;
+}
+
+/**
+ * @brief  获取当前屏幕活跃页面编号
+ * @retval 页面枚举值 (ScreenPageId_t)
+ */
+uint8_t BSP_Screen_GetCurrentPage(void)
+{
+    return s_current_screen_page;
+}
+
+/**
+ * @brief  更新屏幕呼吸引导频率显示（start.breath_freq.val 及当前页面的频率文本控件）
  * @param  bpm: 当前引导频率（次/分钟）
  * @retval 无
  */
 void BSP_Screen_SetGuideBPM(uint8_t bpm)
 {
+    char buf[24];
     BSP_Screen_SetNum("start.breath_freq", "val", (int32_t)bpm);
+    /* 淘晶驰屏幕采用 GBK 编码（"次/分钟" 的 GBK 十六进制为 B4 CE 2F B7 D6 D6 D3） */
+    snprintf(buf, sizeof(buf), "%u\xB4\xCE/\xB7\xD6\xD6\xD3", (unsigned)bpm);
+
+    if (s_current_screen_page == SCREEN_PAGE_JIANYI || s_current_screen_page == SCREEN_PAGE_FANKUI)
+    {
+        BSP_Screen_SetText("t2", "txt", buf);
+    }
+    else if (s_current_screen_page == SCREEN_PAGE_JIANYIELEC ||
+             s_current_screen_page == SCREEN_PAGE_FANKUIELEC)
+    {
+        BSP_Screen_SetText("t7", "txt", buf);
+    }
+    else
+    {
+        BSP_Screen_SetText("t2", "txt", buf);
+        BSP_Screen_SetText("t7", "txt", buf);
+    }
 }
 
 /**
- * @brief  更新屏幕剩余治疗倒计时显示（同步 start.timer_cnt.val 分钟数及 t_time.txt = "MM:SS"）
+ * @brief  更新屏幕剩余治疗倒计时显示（同步 start.timer_cnt.val 分钟数及当前页面的倒计时文本控件）
  * @param  remain_sec: 剩余时间（秒）
  * @retval 无
  */
@@ -368,9 +406,38 @@ void BSP_Screen_SetRemainTimeSec(uint16_t remain_sec)
     char buf[16];
     uint16_t min = remain_sec / 60U;
     uint16_t sec = remain_sec % 60U;
-    snprintf(buf, sizeof(buf), "%02u:%02u", min, sec);
+
+    /* 1. 同步全局数字变量 start.timer_cnt.val (整分钟数) */
     BSP_Screen_SetNum("start.timer_cnt", "val", (int32_t)min);
-    BSP_Screen_SetText("t_time", "txt", buf);
+
+#if SCREEN_TIMER_FORMAT_MMSS
+    /* 格式 1 (默认推荐)：MM:SS 秒级精确倒计时（如 09:59、09:58），每秒跳动，临床直观感强 */
+    snprintf(buf, sizeof(buf), "%02u:%02u", min, sec);
+#else
+    /* 格式 2：传统整分钟递减（如 10分钟、9分钟），GBK 编码：分=\xB7\xD6, 钟=\xD6\xD3 */
+    uint16_t disp_min = (remain_sec + 59U) / 60U;
+    snprintf(buf, sizeof(buf), "%u\xB7\xD6\xD6\xD3", (unsigned)disp_min);
+#endif
+
+    /* 3. 针对不同治疗运行页面精准刷新对应文本控件：
+     * Page 4 (jianyi) 与 Page 7 (fankui)：倒计时文本控件为 t0
+     * Page 6 (jianyielec)、Page 9 (fankuielec) 与 Page 11 (elec)：倒计时文本控件为 t4
+     */
+    if (s_current_screen_page == SCREEN_PAGE_JIANYI || s_current_screen_page == SCREEN_PAGE_FANKUI)
+    {
+        BSP_Screen_SetText("t0", "txt", buf);
+    }
+    else if (s_current_screen_page == SCREEN_PAGE_JIANYIELEC ||
+             s_current_screen_page == SCREEN_PAGE_FANKUIELEC ||
+             s_current_screen_page == SCREEN_PAGE_ELEC)
+    {
+        BSP_Screen_SetText("t4", "txt", buf);
+    }
+    else
+    {
+        BSP_Screen_SetText("t0", "txt", buf);
+        BSP_Screen_SetText("t4", "txt", buf);
+    }
 }
 
 /**
