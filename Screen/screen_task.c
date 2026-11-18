@@ -31,6 +31,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_START: /* Page 0: start (主界面/开机欢迎页) */
             if (action == 0x08U)
             {
+                App_Therapy_StopToMenu();
                 BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME); /* 0001: 欢迎使用呼吸调控仪... */
             }
             break;
@@ -39,6 +40,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_LIANHEMODE2: /* Page 10: lianhemode2 (联合模式第2步：选电刺激) */
             if (action == 0x08U)
             {
+                App_Therapy_StopToMenu();
                 BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_STIM_MODE); /* 0011: 请选择电刺激模式 */
             }
             break;
@@ -46,10 +48,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_BREATHMODE:  /* Page 2:  breathmode (呼吸引导模式选择：简易/生物反馈) */
             if (action == 0x08U)
             {
-                /* 底层收发联调测试：收到 05 02 08 FF FF FF 以后，向串口回发 05 02 01 01 FF FF FF */
-                static const uint8_t s_test_ack[7] = {0x05U, 0x02U, 0x01U, 0x01U, 0xFFU, 0xFFU, 0xFFU};
-                BSP_Screen_SendRawBytes(s_test_ack, 7U);
-
+                App_Therapy_StopToMenu();
                 BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_BREATH_MODE); /* 0002: 请选择呼吸引导模式 */
             }
             break;
@@ -57,6 +56,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_LIANHEMODE1: /* Page 3:  lianhemode1 (联合模式第1步：选呼吸引导) */
             if (action == 0x08U)
             {
+                App_Therapy_StopToMenu();
                 BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_BREATH_MODE); /* 0002: 请选择呼吸引导模式 */
             }
             break;
@@ -75,6 +75,19 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
                     BSP_Screen_SetLungFill(0U);
                     BSP_Screen_SetBreathArrow(0U);
+                    BSP_Screen_SetControlBtnPic(0U);
+                }
+                else
+                {
+                    /* 全新进入模式：显示初始默认设定值（默认10次/分，初始设定时长如10:00） */
+                    g_app.Breath_Mode = BREATH_MODE_SIMPLE;
+                    g_app.Stim_Mode   = STIM_MODE_OFF;
+                    g_app.guide_bpm   = 10U;
+                    BSP_Screen_SetGuideBPM(10U);
+                    BSP_Screen_SetRemainTimeSec((uint16_t)g_app.timer_min * 60U);
+                    BSP_Screen_SetLungFill(0U);
+                    BSP_Screen_SetBreathArrow(0U);
+                    BSP_Screen_SetControlBtnPic(0U);
                 }
                 BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009: 请点击启停键... */
             }
@@ -116,6 +129,17 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
                     BSP_Screen_SetLungFill(0U);
                     BSP_Screen_SetBreathArrow(0U);
+                    BSP_Screen_SetControlBtnPic(0U);
+                }
+                else
+                {
+                    g_app.Breath_Mode = BREATH_MODE_SIMPLE;
+                    g_app.guide_bpm   = 10U;
+                    BSP_Screen_SetGuideBPM(10U);
+                    BSP_Screen_SetRemainTimeSec((uint16_t)g_app.timer_min * 60U);
+                    BSP_Screen_SetLungFill(0U);
+                    BSP_Screen_SetBreathArrow(0U);
+                    BSP_Screen_SetControlBtnPic(0U);
                 }
                 BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009 */
             }
@@ -163,10 +187,13 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
                     BSP_Screen_SetLungFill(0U);
                     BSP_Screen_SetBreathArrow(0U);
+                    BSP_Screen_SetControlBtnPic(0U);
                     BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT);
                 }
                 else
                 {
+                    BSP_Screen_SetRemainTimeSec((uint16_t)g_app.timer_min * 60U);
+                    BSP_Screen_SetGuideBPM(10U);
                     App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
                 }
             }
@@ -210,10 +237,13 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
                     BSP_Screen_SetLungFill(0U);
                     BSP_Screen_SetBreathArrow(0U);
+                    BSP_Screen_SetControlBtnPic(0U);
                     BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT);
                 }
                 else
                 {
+                    BSP_Screen_SetRemainTimeSec((uint16_t)g_app.timer_min * 60U);
+                    BSP_Screen_SetGuideBPM(10U);
                     App_Therapy_SelectBreathMode(BREATH_MODE_BIOFEEDBACK);
                 }
             }
@@ -258,6 +288,12 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     uint32_t elap_s  = g_app.active_elapsed_ms / 1000U;
                     uint16_t rem_s   = (total_s > elap_s) ? (uint16_t)(total_s - elap_s) : 0U;
                     BSP_Screen_SetRemainTimeSec(rem_s);
+                    BSP_Screen_SetControlBtnPic(0U);
+                }
+                else
+                {
+                    BSP_Screen_SetRemainTimeSec((uint16_t)g_app.timer_min * 60U);
+                    BSP_Screen_SetControlBtnPic(0U);
                 }
                 BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT); /* 0009 */
             }

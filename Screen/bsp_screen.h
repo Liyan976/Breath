@@ -41,6 +41,10 @@ extern "C" {
 /** @defgroup 倒计时显示格式配置 */
 #define SCREEN_TIMER_FORMAT_MMSS 1      /**< 1: 秒级精准倒计时 "09:59"; 0: 传统整分钟 "10分钟" */
 
+/** @defgroup 串口屏启停控制按键图标ID（严格对应 NAFLD.HMI 工程各治疗运行页面 b1.pic 图标） */
+#define SCREEN_PIC_BTN_RUNNING   10U   /**< 运行中：显示“暂停”图标 (|| 双竖杠，点击可暂停) */
+#define SCREEN_PIC_BTN_STOPPED   11U   /**< 停止/暂停中：显示“开始/播放”图标 (▶ 三角，点击可开始) */
+
 /**
  * @brief 串口屏页面编号定义（严格对应上位机 15 个完整界面：Page 0 ~ Page 14）
  */
@@ -95,6 +99,8 @@ void     BSP_Screen_SetText(const char *obj, const char *attr, const char *txt);
 void     BSP_Screen_SetVisible(const char *obj, uint8_t visible);
 
 /* ================= 业务语义界面刷新接口 ================= */
+uint8_t  BSP_Screen_IsTherapyPage(uint8_t page);
+void     BSP_Screen_SetControlBtnPic(uint8_t is_running);
 void     BSP_Screen_SetCurrentPage(uint8_t page_id);
 uint8_t  BSP_Screen_GetCurrentPage(void);
 void     BSP_Screen_SetPage(const char *page_name);

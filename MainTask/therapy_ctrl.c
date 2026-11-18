@@ -14,6 +14,7 @@ static uint8_t  s_bio_busy_prev    = 0U;
 static uint8_t  s_bio_wait_5s      = 0U;
 static uint32_t s_bio_calib_tick   = 0U;
 static uint8_t  s_paused_therapy_page = 0xFFU; /**< 0xFF 表示当前无暂停保存的治疗模式 */
+static uint8_t  s_calib_signal_detected_prev = 0U; /**< 生物反馈校准期传感器有效气流状态，用于节流更新 */
 
 uint8_t App_Therapy_GetPausedPage(void)
 {
@@ -166,9 +167,10 @@ void App_Therapy_SelectBreathMode(BreathMode_t mode)
         s_bio_busy_prev = 1U;
         s_bio_wait_5s = 0U;
 
-        /* 用户明确要求：引导期间按键显示暂停图标 (b1.pic = 15) */
-        BSP_Screen_SetNum("b1", "pic", 15);
+        /* 用户明确要求：引导期间按键显示暂停图标 (b1.pic = 10, 点击可暂停) */
+        BSP_Screen_SetControlBtnPic(1U);
         /* 初始状态肺部与箭头保持静止排空，待检测到传感器呼吸信号后再动起来 */
+        s_calib_signal_detected_prev = 0U;
         BSP_Screen_SetLungFill(0U);
         BSP_Screen_SetBreathArrow(0U);
         Algo_Breath_StartGuide(10U);
@@ -263,8 +265,8 @@ void App_Therapy_Pause(void)
         BSP_Screen_SetLungFill(0U);
         BSP_Screen_SetBreathArrow(0U);
 
-        /* 暂停后按钮切换为开始/播放图标 (pic = 16) */
-        BSP_Screen_SetNum("b1", "pic", 16);
+        /* 暂停后按钮切换为开始/播放图标 (pic = 11) */
+        BSP_Screen_SetControlBtnPic(0U);
 
         BSP_Audio_PlayVoice(AUDIO_VOICE_PAUSE_TREAT);
     }
@@ -276,8 +278,8 @@ void App_Therapy_Resume(void)
     {
         g_app.paused = 0U;
 
-        /* 恢复运行后按钮切换为暂停图标 (pic = 15) */
-        BSP_Screen_SetNum("b1", "pic", 15);
+        /* 恢复运行后按钮切换为暂停图标 (pic = 10) */
+        BSP_Screen_SetControlBtnPic(1U);
 
         /* 若是在生物反馈引导未完成时被暂停的，恢复为引导阶段继续检测 */
         if (!Algo_Breath_IsBioCalibReady() &&
@@ -401,7 +403,7 @@ void App_Therapy_StartSimpleBreath(uint8_t timer_min, uint8_t volume, uint8_t bl
     BSP_Stim_Enable(0U);
 
     /* 启动瞬间立即强制刷新屏幕频率与初始倒计时，杜绝显示残留值 */
-    BSP_Screen_SetNum("b1", "pic", 15);
+    BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
 
@@ -438,7 +440,7 @@ void App_Therapy_StartBiofeedbackBreath(uint8_t timer_min, uint8_t volume, uint8
     BSP_Stim_Enable(0U);
 
     /* 启动瞬间立即强制刷新屏幕频率与初始倒计时，杜绝显示残留值 */
-    BSP_Screen_SetNum("b1", "pic", 15);
+    BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
 
@@ -482,7 +484,7 @@ void App_Therapy_StartPureStim(uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, u
     BSP_Stim_Enable(1U);
 
     /* 启动瞬间立即刷新初始倒计时与按键状态 */
-    BSP_Screen_SetNum("b1", "pic", 15);
+    BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
 
     BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
@@ -531,7 +533,7 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
     BSP_Stim_Enable(1U);
 
     /* 启动瞬间立即强制刷新屏幕频率与初始倒计时 */
-    BSP_Screen_SetNum("b1", "pic", 15);
+    BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
 
@@ -540,24 +542,7 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
 
 void App_Therapy_StopToMenu(void)
 {
-    if (g_app.sys_state == APP_STATE_RUNNING)
-    {
-        BSP_Screen_ShowToast("Pause before return");
-        return;
-    }
-
-    /* 若当前处于暂停状态，返回菜单时保留已耗时间与暂停页面标识，供重新进入时继续 */
-    if (g_app.paused || g_app.sys_state == APP_STATE_PAUSED)
-    {
-        BSP_Stim_Enable(0U);
-        BSP_Audio_Stop();
-        BSP_Screen_SetLungFill(0U);
-        BSP_Screen_SetBreathArrow(0U);
-        BSP_Screen_SetPage("start");
-        return;
-    }
-
-    /* 未在治疗中或治疗已结束：常规完全重置 */
+    /* 彻底重置治疗运行状态与暂停保存数据，确保退出到菜单后重新进入时从初始设定重新开始 */
     g_app.running = 0U;
     g_app.paused  = 0U;
     g_app.active_elapsed_ms = 0U;
@@ -572,7 +557,6 @@ void App_Therapy_StopToMenu(void)
     BSP_Audio_Stop();
     BSP_Screen_SetLungFill(0U);
     BSP_Screen_SetBreathArrow(0U);
-    BSP_Screen_SetPage("start");
 }
 
 void App_Therapy_PowerOffRequest(void)
@@ -619,14 +603,16 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
                 BSP_Screen_SetGuideBPM(g_app.guide_bpm);
                 BSP_Audio_PlayBioResult(g_app.guide_bpm);
 
-                /* 3次呼吸引导检测结束：清空动画并将按键切换为“开始”图标(pic=16)，等待患者开启治疗 */
-                BSP_Screen_SetNum("b1", "pic", 16);
+                /* 3次呼吸引导检测结束：清空动画并将按键切换为“开始”图标(pic=11)，等待患者开启治疗 */
+                BSP_Screen_SetControlBtnPic(0U);
             }
             else
             {
                 /* 检查传感器是否有呼吸气流输出 */
-                if (Algo_Breath_IsSignalDetected())
+                uint8_t detected = Algo_Breath_IsSignalDetected();
+                if (detected)
                 {
+                    s_calib_signal_detected_prev = 1U;
                     /* 检测到传感器呼吸输出：肺部填充与箭头跟随 10次/分 引导律动 */
                     BreathGuideOut_t calib_guide;
                     Algo_Breath_StepGuide(20U, 10U, &calib_guide);
@@ -635,9 +621,13 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
                 }
                 else
                 {
-                    /* 未检测到有效气流：肺部清空、箭头全隐，保持静止等待 */
-                    BSP_Screen_SetLungFill(0U);
-                    BSP_Screen_SetBreathArrow(0U);
+                    if (s_calib_signal_detected_prev)
+                    {
+                        s_calib_signal_detected_prev = 0U;
+                        /* 未检测到有效气流：肺部清空、箭头全隐，保持静止等待 */
+                        BSP_Screen_SetLungFill(0U);
+                        BSP_Screen_SetBreathArrow(0U);
+                    }
                 }
 
                 /* 检查 0007 播完后 5 秒无呼吸信号重试机制（最多重复播 3 次） */
@@ -670,8 +660,8 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
                         BSP_Screen_SetGuideBPM(5U);
                         BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_FALLBACK);
 
-                        /* 超时结束同样切换按键为“开始”图标(pic=16) */
-                        BSP_Screen_SetNum("b1", "pic", 16);
+                        /* 超时结束同样切换按键为“开始”图标(pic=11) */
+                        BSP_Screen_SetControlBtnPic(0U);
                     }
                 }
             }
@@ -733,7 +723,7 @@ void App_Therapy_MainTick10ms(uint32_t now_ms)
             BSP_Stim_Enable(0U);
             BSP_Screen_SetLungFill(0U);
             BSP_Screen_SetBreathArrow(0U);
-            BSP_Screen_SetNum("b1", "pic", 16);
+            BSP_Screen_SetControlBtnPic(0U);
             BSP_Screen_ShowFinished(g_app.timer_min);
             BSP_Audio_PlayTreatEnd(g_app.timer_min);
 

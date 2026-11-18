@@ -30,7 +30,7 @@ static uint8_t  s_frame_len = 0U;                   /**< 当前已累计的字�
 static uint8_t  s_ff_cnt    = 0U;                   /**< 连续收到的 0xFF 计数 */
 
 static osMutexId s_tx_mutex = NULL;                 /**< 串口发送互斥锁（防止多任务指令混杂） */
-static uint8_t  s_current_screen_page = SCREEN_PAGE_JIANYI; /**< 当前屏幕活跃页面号，默认为简易治疗页 */
+static uint8_t  s_current_screen_page = SCREEN_PAGE_START;  /**< 当前屏幕活跃页面号，默认为主菜单欢迎页 */
 
 /**
  * @brief  底层串口字节流发送函数（自动加锁保护多任务并发访问）
@@ -315,23 +315,56 @@ void BSP_Screen_SetPage(const char *page_name)
 }
 
 /**
+ * @brief  判断当前页面是否为 5 个治疗测量运行页面之一
+ * @param  page: 页面编号
+ * @retval 1=是治疗页面，0=否（菜单或参数设置页）
+ */
+uint8_t BSP_Screen_IsTherapyPage(uint8_t page)
+{
+    return (page == SCREEN_PAGE_JIANYI ||
+            page == SCREEN_PAGE_JIANYIELEC ||
+            page == SCREEN_PAGE_FANKUI ||
+            page == SCREEN_PAGE_FANKUIELEC ||
+            page == SCREEN_PAGE_ELEC);
+}
+
+/**
+ * @brief  更新启停控制按键图标（对应各治疗页面 b1.pic 图标）
+ * @param  is_running: 1=运行中显示暂停图标(10)，0=停止/暂停中显示开始播放图标(11)
+ * @retval 无
+ */
+void BSP_Screen_SetControlBtnPic(uint8_t is_running)
+{
+    if (!BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+    BSP_Screen_SetNum("b1", "pic", is_running ? (int32_t)SCREEN_PIC_BTN_RUNNING : (int32_t)SCREEN_PIC_BTN_STOPPED);
+}
+
+/**
  * @brief  更新肺部动画进度条控件（j0.val = 0~100）
  * @param  pct_0_to_100: 填充百分比（0=排空，100=充盈）
  * @retval 无
  */
 void BSP_Screen_SetLungFill(uint8_t pct_0_to_100)
 {
+    /* 仅在 5 个治疗运行页面发送，避免在菜单页面篡改电池进度条 (breathmode.j0) 等控件 */
+    if (!BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+
     if (pct_0_to_100 > 100U) pct_0_to_100 = 100U;
     BSP_Screen_SetNum("j0", "val", (int32_t)pct_0_to_100);
 }
 
 /**
  * @brief  控制呼吸箭头显隐（吸气显示 p1，呼气显示 p2，其余全隐）
+ * @note   核心保护：严禁在 breathmode (Page 2) 等菜单页面发送！
+ *         在 Page 2 上，p1 是“简易治疗模式”按钮图片，p3 是“生物反馈模式”按钮图片。
+ *         若在 Page 2 误发 vis p1,0 会直接导致“简易治疗模式”按键凭空消失！
  * @param  phase: 0=隐藏，1=吸气，2=呼气
  * @retval 无
  */
 void BSP_Screen_SetBreathArrow(uint8_t phase)
 {
+    if (!BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+
     if (phase == 1U)
     {
         BSP_Screen_SetVisible("p1", 1U);
