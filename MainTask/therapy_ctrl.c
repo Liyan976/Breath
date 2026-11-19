@@ -167,8 +167,8 @@ void App_Therapy_SelectBreathMode(BreathMode_t mode)
         s_bio_busy_prev = 1U;
         s_bio_wait_5s = 0U;
 
-        /* 用户明确要求：引导期间按键显示暂停图标 (b1.pic = 10, 点击可暂停) */
-        BSP_Screen_SetControlBtnPic(1U);
+        /* 校准引导期间按键保持“开始/播放”图标 (pic = 11)，禁止自动变为暂停图标 */
+        BSP_Screen_SetControlBtnPic(0U);
         /* 初始状态肺部与箭头保持静止排空，待检测到传感器呼吸信号后再动起来 */
         s_calib_signal_detected_prev = 0U;
         BSP_Screen_SetLungFill(0U);

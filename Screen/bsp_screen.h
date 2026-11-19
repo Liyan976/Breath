@@ -39,7 +39,7 @@ extern "C" {
 #define SCREEN_FRAME_MAX_DATA   48U     /**< 单帧有效载荷最大字节数（不含3字节0xFF帧尾） */
 
 /** @defgroup 倒计时显示格式配置 */
-#define SCREEN_TIMER_FORMAT_MMSS 1      /**< 1: 秒级精准倒计时 "09:59"; 0: 传统整分钟 "10分钟" */
+#define SCREEN_TIMER_FORMAT_MMSS 0      /**< 1: 秒级精准倒计时 "09:59"; 0: 传统整分钟 "10分钟"（需求规定格式） */
 
 /** @defgroup 串口屏启停控制按键图标ID（严格对应 NAFLD.HMI 工程各治疗运行页面 b1.pic 图标） */
 #define SCREEN_PIC_BTN_RUNNING   10U   /**< 运行中：显示“暂停”图标 (|| 双竖杠，点击可暂停) */
@@ -108,6 +108,7 @@ void     BSP_Screen_SetLungFill(uint8_t pct_0_to_100);
 void     BSP_Screen_SetBreathArrow(uint8_t phase);
 void     BSP_Screen_SetGuideBPM(uint8_t bpm);
 void     BSP_Screen_SetRemainTimeSec(uint16_t remain_sec);
+void     BSP_Screen_SetBleStatus(uint8_t connected);
 void     BSP_Screen_SetElectrodeWarn(uint8_t ch, uint8_t dropped);
 void     BSP_Screen_SetBattery(uint8_t pct);
 void     BSP_Screen_SetStimParams(uint8_t freq_hz, const uint8_t levels[3]);
