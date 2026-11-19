@@ -785,27 +785,25 @@ void App_Therapy_OnBleCommand(const BleRxCommand_t *cmd)
 
     if (cmd->cmd_id == BLE_CMD_SET_PARAMS && cmd->payload_len >= 6U)
     {
-        uint8_t freq = (cmd->payload[0] > STIM_FREQ_MAX_HZ) ? STIM_FREQ_MAX_HZ : cmd->payload[0];
-        uint8_t c1   = (cmd->payload[1] > STIM_LEVEL_MAX) ? STIM_LEVEL_MAX : cmd->payload[1];
-        uint8_t c2   = (cmd->payload[2] > STIM_LEVEL_MAX) ? STIM_LEVEL_MAX : cmd->payload[2];
-        uint8_t c3   = (cmd->payload[3] > STIM_LEVEL_MAX) ? STIM_LEVEL_MAX : cmd->payload[3];
+        uint8_t freq = cmd->payload[0];
+        uint8_t c1   = cmd->payload[1];
+        uint8_t c2   = cmd->payload[2];
+        uint8_t c3   = cmd->payload[3];
         uint8_t tmin = cmd->payload[4];
-        uint8_t vol  = (cmd->payload[5] > APP_VOL_MAX) ? APP_VOL_MAX : cmd->payload[5];
+        uint8_t vol  = cmd->payload[5];
 
-        if (tmin < APP_TIMER_MIN_MIN) tmin = APP_TIMER_MIN_MIN;
-        if (tmin > APP_TIMER_MIN_MAX) tmin = APP_TIMER_MIN_MAX;
+        /* 统一调用业务 Setter，自动完成模式边界检查：
+         * 若处于疏密波模式，自动钳位在 0~20 Hz 内（硬件底层自动乘 5 输出 0~100 Hz 密波）
+         */
+        App_Therapy_SetStimFreq(freq);
+        App_Therapy_SetStimLevel(0U, c1);
+        App_Therapy_SetStimLevel(1U, c2);
+        App_Therapy_SetStimLevel(2U, c3);
+        App_Therapy_SetTimerMin(tmin);
+        App_Therapy_SetVolume(vol);
 
-        g_app.stim_freq_hz = freq;
-        g_app.stim_level[0] = c1;
-        g_app.stim_level[1] = c2;
-        g_app.stim_level[2] = c3;
-        g_app.timer_min = tmin;
-        g_app.volume = vol;
-
-        BSP_Stim_SetBaseFreqHz(freq ? freq : 1U);
         BSP_Stim_SetAllLevels(g_app.stim_level);
-        BSP_Audio_SetVolume(vol);
-        BSP_Screen_SetStimParams(freq, g_app.stim_level);
+        BSP_Screen_SetStimParams(g_app.stim_freq_hz, g_app.stim_level);
         BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
     }
     else if (cmd->cmd_id == BLE_CMD_CTRL_STATE && cmd->payload_len >= 1U)

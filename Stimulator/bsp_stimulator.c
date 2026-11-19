@@ -230,10 +230,12 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
         }
         else if (s_wave_type == STIM_WAVE_DENSE_SPARSE)
         {
-            /* 疏密波：疏波工作 5s (频率 F)，密波工作 10s (频率 5*F)（周期 15000ms） */
+            /* 疏密波：严格遵照开发手册要求《工作时间比值(疏波:密波=2:1)，疏密波频率比值(疏波:密波=1:5)》
+             * 周期 15000ms：前 10s 为疏波（基频 F），后 5s 为密波（5*F）
+             */
             uint32_t t = wave_phase_ms % 15000U;
             s_gate_on = 1U;
-            if (t < 5000U)
+            if (t < 10000U)
             {
                 BSP_Stim_SetRuntimeFreqHz(s_base_freq_hz);
             }
