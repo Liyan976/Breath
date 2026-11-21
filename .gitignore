@@ -29,3 +29,10 @@ MDK-ARM/JLinkSettings.ini
 # VS Code C/C++ local database
 .vscode/vc.db*
 
+# Temporary document extraction & scripts
+all_paragraphs.txt
+build_handbook.py
+generate_doc.py
+extracted_media/
+
+

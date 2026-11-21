@@ -15,6 +15,58 @@ static uint8_t  s_bio_wait_5s      = 0U;
 static uint32_t s_bio_calib_tick   = 0U;
 static uint8_t  s_paused_therapy_page = 0xFFU; /**< 0xFF 表示当前无暂停保存的治疗模式 */
 static uint8_t  s_calib_signal_detected_prev = 0U; /**< 生物反馈校准期传感器有效气流状态，用于节流更新 */
+static uint8_t  s_bio_freq_valid   = 0U; /**< 生物反馈呼吸频率是否已采集有效 */
+static uint8_t  s_bio_mode_owner   = 0U; /**< 采集该频率所属的具体页面 */
+
+void App_Therapy_StartBioCalib(uint8_t page)
+{
+    s_bio_mode_owner = page;
+    s_bio_freq_valid = 0U;
+    Algo_Breath_ResetBioCalib();
+
+    g_app.Breath_Mode = BREATH_MODE_BIOFEEDBACK;
+    g_app.guide_bpm   = 10U;
+    g_app.sys_state   = APP_STATE_BIO_CALIB;
+    s_bio_calib_repeat = 1U; /* 第一次播报 0007 */
+    s_bio_calib_tick = HAL_GetTick();
+    s_bio_busy_prev = 1U;
+    s_bio_wait_5s = 0U;
+    s_calib_signal_detected_prev = 0U;
+
+    /* 校准引导期间按键保持“开始/播放”图标 (pic = 11)，禁止自动变为暂停图标 */
+    BSP_Screen_SetControlBtnPic(0U);
+    /* 初始状态肺部与箭头保持静止排空，待检测到传感器呼吸信号后再动起来 */
+    BSP_Screen_SetLungFill(0U);
+    BSP_Screen_SetBreathArrow(0U);
+    Algo_Breath_StartGuide(10U);
+
+    /* 关键需求：锁住屏幕启动键和设置键，点不动 */
+    BSP_Screen_SendRawCmd("tsw b1,0");
+    BSP_Screen_SendRawCmd("tsw b0,0");
+
+    /* 播放 0007 生物反馈呼吸引导语音 */
+    BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_CALIB);
+}
+
+uint8_t App_Therapy_IsBioFreqValid(void)
+{
+    return s_bio_freq_valid;
+}
+
+uint8_t App_Therapy_GetBioOwner(void)
+{
+    return s_bio_mode_owner;
+}
+
+void App_Therapy_ResetBioCalibrationSession(void)
+{
+    s_bio_freq_valid = 0U;
+    s_bio_mode_owner = 0U;
+    Algo_Breath_ResetBioCalib();
+    g_app.guide_bpm  = 10U;
+    BSP_Screen_SendRawCmd("tsw b1,1");
+    BSP_Screen_SendRawCmd("tsw b0,1");
+}
 
 uint8_t App_Therapy_GetPausedPage(void)
 {
@@ -38,19 +90,17 @@ static uint8_t therapy_can_start(void)
         return 0U;
     }
 
-    if (g_app.Breath_Mode == BREATH_MODE_BIOFEEDBACK && !BSP_BreathSensor_IsInserted())
-    {
-        BSP_Screen_ShowToast("Insert breath sensor");
-        return 0U;
-    }
+    /* 关键修复（问题5 & 问题6）：生物反馈呼吸引导若未插入传感器，校准阶段已自动超时保底为5次/分；
+     * 此处切勿再因 !BSP_BreathSensor_IsInserted() 拦截返回0，否则会导致联合模式点击开始治疗后完全无法启动，
+     * 且电刺激也无法开启（VOUT1 锁死在 4.7V 二极管压降）。
+     */
 
     if (g_app.Stim_Mode != STIM_MODE_OFF)
     {
-        if (g_app.stim_freq_hz < 1U ||
-            (g_app.stim_level[0] == 0U && g_app.stim_level[1] == 0U && g_app.stim_level[2] == 0U))
+        if (g_app.stim_freq_hz < 1U)
         {
-            BSP_Screen_ShowToast("Set stim level & freq");
-            return 0U;
+            g_app.stim_freq_hz = 20U;
+            BSP_Stim_SetBaseFreqHz(20U);
         }
     }
 
@@ -160,22 +210,7 @@ void App_Therapy_SelectBreathMode(BreathMode_t mode)
     g_app.Breath_Mode = mode;
     if (mode == BREATH_MODE_BIOFEEDBACK)
     {
-        Algo_Breath_ResetBioCalib();
-        g_app.sys_state = APP_STATE_BIO_CALIB;
-        s_bio_calib_repeat = 1U; /* 第一次播报 0007 */
-        s_bio_calib_tick = HAL_GetTick();
-        s_bio_busy_prev = 1U;
-        s_bio_wait_5s = 0U;
-
-        /* 校准引导期间按键保持“开始/播放”图标 (pic = 11)，禁止自动变为暂停图标 */
-        BSP_Screen_SetControlBtnPic(0U);
-        /* 初始状态肺部与箭头保持静止排空，待检测到传感器呼吸信号后再动起来 */
-        s_calib_signal_detected_prev = 0U;
-        BSP_Screen_SetLungFill(0U);
-        BSP_Screen_SetBreathArrow(0U);
-        Algo_Breath_StartGuide(10U);
-
-        BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_CALIB);
+        App_Therapy_StartBioCalib(s_bio_mode_owner ? s_bio_mode_owner : SCREEN_PAGE_FANKUI);
     }
     else if (mode == BREATH_MODE_SIMPLE)
     {
@@ -233,6 +268,7 @@ void App_Therapy_SetBleEnable(uint8_t enable)
 
 void App_Therapy_SetStimFreq(uint8_t freq_hz)
 {
+    if (freq_hz < 1U) freq_hz = 1U;
     g_app.stim_freq_hz = (freq_hz > STIM_FREQ_MAX_HZ) ? STIM_FREQ_MAX_HZ : freq_hz;
     if (g_app.Stim_Mode == STIM_MODE_DENSE_DISPERSE && g_app.stim_freq_hz > 20U)
     {
@@ -270,6 +306,12 @@ void App_Therapy_Pause(void)
 
         BSP_Audio_PlayVoice(AUDIO_VOICE_PAUSE_TREAT);
     }
+    else
+    {
+        /* 无论处于何种状态，收到暂停均无条件清空箭头与肺部动画，避免残存显示 */
+        BSP_Screen_SetLungFill(0U);
+        BSP_Screen_SetBreathArrow(0U);
+    }
 }
 
 void App_Therapy_Resume(void)
@@ -304,8 +346,9 @@ void App_Therapy_Resume(void)
             g_app.breath_phase = BREATH_PHASE_INHALE;
             g_app.lung_pct     = 0U;
             BSP_Screen_SetLungFill(0U);
-            BSP_Screen_SetBreathArrow(1U); /* 吸气箭头 */
+            BSP_Screen_SetBreathArrow(1U); /* 吸气箭头（向左指示） */
             BSP_Audio_PlayVoice(AUDIO_VOICE_INHALE);
+            apply_combined_phase_to_stim(BREATH_PHASE_INHALE);
         }
 
         if (g_app.Stim_Mode != STIM_MODE_OFF)
@@ -330,14 +373,12 @@ void App_Therapy_StartOrPause(void)
     if (g_app.sys_state == APP_STATE_RUNNING)
     {
         App_Therapy_Pause();
-        BSP_Screen_SetPage("paused");
         return;
     }
 
     if (g_app.sys_state == APP_STATE_PAUSED)
     {
         App_Therapy_Resume();
-        BSP_Screen_SetPage("running");
         return;
     }
 
@@ -357,6 +398,11 @@ void App_Therapy_StartOrPause(void)
                           ? Algo_Breath_GetBioGBPM()
                           : 10U;
         Algo_Breath_StartGuide(g_app.guide_bpm);
+        g_app.breath_phase = BREATH_PHASE_INHALE;
+        g_app.lung_pct     = 0U;
+        BSP_Screen_SetLungFill(0U);
+        BSP_Screen_SetBreathArrow(1U);
+        apply_combined_phase_to_stim(BREATH_PHASE_INHALE);
     }
     else
     {
@@ -379,7 +425,6 @@ void App_Therapy_StartOrPause(void)
     }
 
     BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
-    BSP_Screen_SetPage("running");
 }
 
 void App_Therapy_StartSimpleBreath(uint8_t timer_min, uint8_t volume, uint8_t ble_en)
@@ -399,13 +444,18 @@ void App_Therapy_StartSimpleBreath(uint8_t timer_min, uint8_t volume, uint8_t bl
     g_app.sys_state = APP_STATE_RUNNING;
 
     Algo_Breath_StartGuide(g_app.guide_bpm);
+    g_app.breath_phase = BREATH_PHASE_INHALE;
+    g_app.lung_pct     = 0U;
+
     BSP_Stim_SetComboOverride(0U, 0U, 1U);
     BSP_Stim_Enable(0U);
 
-    /* 启动瞬间立即强制刷新屏幕频率与初始倒计时，杜绝显示残留值 */
+    /* 启动瞬间立即强制刷新屏幕按键、频率、初始倒计时并点亮吸气指示标 */
     BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
+    BSP_Screen_SetLungFill(0U);
+    BSP_Screen_SetBreathArrow(1U); /* 吸气（向左指示） */
 
     BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
 }
@@ -419,7 +469,12 @@ void App_Therapy_StartBiofeedbackBreath(uint8_t timer_min, uint8_t volume, uint8
     g_app.Breath_Mode = BREATH_MODE_BIOFEEDBACK;
     g_app.Stim_Mode   = STIM_MODE_OFF;
 
-    if (!Algo_Breath_IsBioCalibReady())
+    if (s_bio_freq_valid)
+    {
+        /* 已有校准/测定得到的有效频率，直接保留并使用 */
+        g_app.guide_bpm = Algo_Breath_GetBioGBPM();
+    }
+    else if (!Algo_Breath_IsBioCalibReady())
     {
         Algo_Breath_ResetBioCalib();
         g_app.guide_bpm = 10U;
@@ -436,13 +491,18 @@ void App_Therapy_StartBiofeedbackBreath(uint8_t timer_min, uint8_t volume, uint8
     g_app.sys_state = APP_STATE_RUNNING;
 
     Algo_Breath_StartGuide(g_app.guide_bpm);
+    g_app.breath_phase = BREATH_PHASE_INHALE;
+    g_app.lung_pct     = 0U;
+
     BSP_Stim_SetComboOverride(0U, 0U, 1U);
     BSP_Stim_Enable(0U);
 
-    /* 启动瞬间立即强制刷新屏幕频率与初始倒计时，杜绝显示残留值 */
+    /* 启动瞬间立即强制刷新屏幕按键、频率、初始倒计时并点亮吸气指示标 */
     BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
+    BSP_Screen_SetLungFill(0U);
+    BSP_Screen_SetBreathArrow(1U); /* 吸气（向左指示） */
 
     BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
 }
@@ -458,6 +518,7 @@ void App_Therapy_StartPureStim(uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, u
         default: g_app.Stim_Mode = STIM_MODE_CONTINUOUS; break;
     }
 
+    if (freq_hz < 1U) freq_hz = (g_app.stim_freq_hz >= 1U) ? g_app.stim_freq_hz : 20U;
     App_Therapy_SetStimFreq(freq_hz);
     App_Therapy_SetStimLevel(0U, ch1);
     App_Therapy_SetStimLevel(1U, ch2);
@@ -501,6 +562,7 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
         default: g_app.Stim_Mode = STIM_MODE_CONTINUOUS; break;
     }
 
+    if (freq_hz < 1U) freq_hz = (g_app.stim_freq_hz >= 1U) ? g_app.stim_freq_hz : 20U;
     App_Therapy_SetStimFreq(freq_hz);
     App_Therapy_SetStimLevel(0U, ch1);
     App_Therapy_SetStimLevel(1U, ch2);
@@ -520,22 +582,34 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
 
     if (g_app.Breath_Mode == BREATH_MODE_BIOFEEDBACK)
     {
-        g_app.guide_bpm = Algo_Breath_IsBioCalibReady() ? Algo_Breath_GetBioGBPM() : 10U;
+        if (s_bio_freq_valid)
+        {
+            g_app.guide_bpm = Algo_Breath_GetBioGBPM();
+        }
+        else
+        {
+            g_app.guide_bpm = Algo_Breath_IsBioCalibReady() ? Algo_Breath_GetBioGBPM() : 10U;
+        }
     }
     else
     {
         g_app.guide_bpm = 10U;
     }
     Algo_Breath_StartGuide(g_app.guide_bpm);
+    g_app.breath_phase = BREATH_PHASE_INHALE;
+    g_app.lung_pct     = 0U;
 
     sync_stimulator_params();
     BSP_Stim_SetComboOverride(1U, 1U, g_app.stim_freq_hz ? g_app.stim_freq_hz : 1U);
     BSP_Stim_Enable(1U);
+    apply_combined_phase_to_stim(BREATH_PHASE_INHALE);
 
-    /* 启动瞬间立即强制刷新屏幕频率与初始倒计时 */
+    /* 启动瞬间立即强制刷新屏幕按键、频率、初始倒计时并点亮吸气指示标 */
     BSP_Screen_SetControlBtnPic(1U);
     BSP_Screen_SetGuideBPM(g_app.guide_bpm);
     BSP_Screen_SetRemainTimeSec((uint16_t)timer_min * 60U);
+    BSP_Screen_SetLungFill(0U);
+    BSP_Screen_SetBreathArrow(1U); /* 吸气（向左指示） */
 
     BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
 }
@@ -557,6 +631,10 @@ void App_Therapy_StopToMenu(void)
     BSP_Audio_Stop();
     BSP_Screen_SetLungFill(0U);
     BSP_Screen_SetBreathArrow(0U);
+
+    /* 恢复按键解锁（若之前在采集中退回） */
+    BSP_Screen_SendRawCmd("tsw b1,1");
+    BSP_Screen_SendRawCmd("tsw b0,1");
 }
 
 void App_Therapy_PowerOffRequest(void)
@@ -600,11 +678,16 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
 
                 g_app.guide_bpm = Algo_Breath_GetBioGBPM();
                 g_app.sys_state = APP_STATE_READY;
+                s_bio_freq_valid = 1U; /* 标记呼吸频率已采集就绪 */
                 BSP_Screen_SetGuideBPM(g_app.guide_bpm);
                 BSP_Audio_PlayBioResult(g_app.guide_bpm);
 
                 /* 3次呼吸引导检测结束：清空动画并将按键切换为“开始”图标(pic=11)，等待患者开启治疗 */
                 BSP_Screen_SetControlBtnPic(0U);
+
+                /* 关键需求：检测完成，解锁屏幕治疗键和设置键 */
+                BSP_Screen_SendRawCmd("tsw b1,1");
+                BSP_Screen_SendRawCmd("tsw b0,1");
             }
             else
             {
@@ -655,13 +738,19 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
                         BSP_Screen_SetLungFill(0U);
                         BSP_Screen_SetBreathArrow(0U);
 
+                        Algo_Breath_SetBioGBPM(5U);
                         g_app.guide_bpm = 5U;
                         g_app.sys_state = APP_STATE_READY;
+                        s_bio_freq_valid = 1U; /* 回退保底也视为采集流程结束，保留有效数据 */
                         BSP_Screen_SetGuideBPM(5U);
                         BSP_Audio_PlayVoice(AUDIO_VOICE_BIO_FALLBACK);
 
                         /* 超时结束同样切换按键为“开始”图标(pic=11) */
                         BSP_Screen_SetControlBtnPic(0U);
+
+                        /* 解锁屏幕治疗键和设置键 */
+                        BSP_Screen_SendRawCmd("tsw b1,1");
+                        BSP_Screen_SendRawCmd("tsw b0,1");
                     }
                 }
             }

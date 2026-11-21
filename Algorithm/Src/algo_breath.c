@@ -278,6 +278,14 @@ uint8_t Algo_Breath_GetBioGBPM(void)
     return s_bio_gbpm;
 }
 
+void Algo_Breath_SetBioGBPM(uint8_t bpm)
+{
+    if (bpm < GBPM_MIN) bpm = GBPM_MIN;
+    if (bpm > GBPM_MAX) bpm = GBPM_MAX;
+    s_bio_gbpm = bpm;
+    s_calib_ready = 1U;
+}
+
 uint8_t Algo_Breath_GetRealCBPM(void)
 {
     return s_real_cbpm;

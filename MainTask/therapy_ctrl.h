@@ -16,6 +16,12 @@ uint8_t App_Therapy_GetPausedPage(void);
 uint8_t App_Therapy_IsPausedInPage(uint8_t page);
 void    App_Therapy_ClearPausedSession(void);
 
+/* Biofeedback calibration & session retention management */
+void    App_Therapy_StartBioCalib(uint8_t page);
+uint8_t App_Therapy_IsBioFreqValid(void);
+uint8_t App_Therapy_GetBioOwner(void);
+void    App_Therapy_ResetBioCalibrationSession(void);
+
 /* Menu & mode selection handlers (called from ScreenTask switch-case) */
 void App_Therapy_EnterBreathMenu(uint8_t is_combo);
 void App_Therapy_EnterStimMenu(void);

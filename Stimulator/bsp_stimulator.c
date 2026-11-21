@@ -302,13 +302,12 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
         if (s_elec_dropped[ch])
         {
             s_current_level_f[ch] = 0.0f;
-            set_cc_dac_ccr(ch, 0U);
-            set_boost_ccr(ch, 0U);
-            continue;
+            /* 脱落时恒流 DAC 保持微弱探测占空比（~1mA安全探针），保证电极重新贴附时能够被采样识别 */
+            set_cc_dac_ccr(ch, 30U);
         }
-
-        /* Soft-start ramp over STIM_ELEC_RECOVER_RAMP_MS (10ms step) */
+        else
         {
+            /* Soft-start ramp over STIM_ELEC_RECOVER_RAMP_MS (10ms step) */
             float target_f = (float)s_target_level[ch];
             float step = target_f * (10.0f / (float)STIM_ELEC_RECOVER_RAMP_MS);
             if (step < 0.02f) step = 0.02f;
@@ -321,18 +320,19 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
             {
                 s_current_level_f[ch] = target_f;
             }
-        }
 
-        /* Update Constant-Current DAC PWM */
-        {
+            /* Update Constant-Current DAC PWM */
             uint32_t dac_ccr = (uint32_t)((s_current_level_f[ch] / (float)STIM_LEVEL_MAX) * (float)CC_DAC_CCR_30MA);
             set_cc_dac_ccr(ch, dac_ccr);
         }
 
-        /* Closed-loop PI Boost regulator: 8V..30V scaled with level */
+        /* Closed-loop PI Boost regulator: 根据设定目标档位稳定升压 (7.5V ~ 30V)
+         * 关键修复（问题7）：无论电极是否脱落，升压电路均维持设定档位目标电压稳定输出，
+         * 确保 PA0 (TIM5_CH1) 始终产生 50kHz PWM，VOUT1 稳定升压而非死锁在 4.68V 二极管压降 */
         {
+            float eff_level = (float)s_target_level[ch];
             float target_mv = (float)STIM_BOOST_MIN_MV +
-                              (s_current_level_f[ch] / (float)STIM_LEVEL_MAX) *
+                              (eff_level / (float)STIM_LEVEL_MAX) *
                               (float)(STIM_BOOST_MAX_MV - STIM_BOOST_MIN_MV);
             float err_v = (target_mv - (float)vout_mv) * 0.001f;
             float duty;
@@ -383,7 +383,7 @@ void BSP_Stim_PulseTickISR(void)
                 s_hb_state = HB_STATE_POS_PULSE;
                 for (ch = 0U; ch < STIM_CH_COUNT; ch++)
                 {
-                    if (s_target_level[ch] > 0U && !s_elec_dropped[ch])
+                    if (s_target_level[ch] > 0U)
                     {
                         hb_write_ch(ch, GPIO_PIN_SET, GPIO_PIN_RESET);
                     }
@@ -413,7 +413,7 @@ void BSP_Stim_PulseTickISR(void)
                 s_hb_state = HB_STATE_NEG_PULSE;
                 for (ch = 0U; ch < STIM_CH_COUNT; ch++)
                 {
-                    if (s_target_level[ch] > 0U && !s_elec_dropped[ch])
+                    if (s_target_level[ch] > 0U)
                     {
                         hb_write_ch(ch, GPIO_PIN_RESET, GPIO_PIN_SET);
                     }

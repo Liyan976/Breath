@@ -39,6 +39,7 @@ void Algo_Breath_StopGuide(void);
 void Algo_Breath_StepGuide(uint32_t dt_ms, uint8_t target_bpm, BreathGuideOut_t *out);
 
 uint8_t Algo_Breath_GetBioGBPM(void);
+void    Algo_Breath_SetBioGBPM(uint8_t bpm);
 uint8_t Algo_Breath_GetRealCBPM(void);
 uint8_t Algo_Breath_IsBioCalibReady(void);
 uint8_t Algo_Breath_IsSignalDetected(void);

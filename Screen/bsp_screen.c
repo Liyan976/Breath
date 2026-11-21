@@ -346,15 +346,15 @@ void BSP_Screen_SetControlBtnPic(uint8_t is_running)
  */
 void BSP_Screen_SetLungFill(uint8_t pct_0_to_100)
 {
-    /* 仅在 5 个治疗运行页面发送，避免在菜单页面篡改电池进度条 (breathmode.j0) 等控件 */
-    if (!BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+    /* 仅在 4 个呼吸治疗运行页面发送，严禁在 elec (Page 11) 发送，避免将 elec.j0 电池进度条清零成空白！ */
+    if (s_current_screen_page == SCREEN_PAGE_ELEC || !BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
 
     if (pct_0_to_100 > 100U) pct_0_to_100 = 100U;
     BSP_Screen_SetNum("j0", "val", (int32_t)pct_0_to_100);
 }
 
 /**
- * @brief  控制呼吸箭头显隐（吸气显示 p1，呼气显示 p2，其余全隐）
+ * @brief  控制呼吸箭头显隐（吸气显示向左箭头 p2，呼气显示向右箭头 p1，其余全隐）
  * @note   核心保护：严禁在 breathmode (Page 2) 等菜单页面发送！
  *         在 Page 2 上，p1 是“简易治疗模式”按钮图片，p3 是“生物反馈模式”按钮图片。
  *         若在 Page 2 误发 vis p1,0 会直接导致“简易治疗模式”按键凭空消失！
@@ -363,20 +363,28 @@ void BSP_Screen_SetLungFill(uint8_t pct_0_to_100)
  */
 void BSP_Screen_SetBreathArrow(uint8_t phase)
 {
-    if (!BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+    if (s_current_screen_page == SCREEN_PAGE_ELEC || !BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+
+    /* 确保屏幕自带定时器 tm0 关闭，防止其 50ms 周期自带粗糙逻辑反向覆盖箭头 */
+    BSP_Screen_SendRawCmd("tm0.en=0");
 
     if (phase == 1U)
     {
-        BSP_Screen_SetVisible("p1", 1U);
-        BSP_Screen_SetVisible("p2", 0U);
+        /* 吸气 (Inhale) -> 气体吸入胸腔，指示向左 (p2 为左箭头图片 pic=12) */
+        BSP_Screen_SetVisible("p1", 0U);
+        BSP_Screen_SetVisible("p2", 1U);
+        BSP_Screen_SetNum("start.breath_phase", "val", 1);
     }
     else if (phase == 2U)
     {
-        BSP_Screen_SetVisible("p1", 0U);
-        BSP_Screen_SetVisible("p2", 1U);
+        /* 呼气 (Exhale) -> 气体呼出胸腔，指示向右 (p1 为右箭头图片 pic=13) */
+        BSP_Screen_SetVisible("p1", 1U);
+        BSP_Screen_SetVisible("p2", 0U);
+        BSP_Screen_SetNum("start.breath_phase", "val", 0);
     }
     else
     {
+        /* 暂停或停止 -> 箭头全部隐藏 */
         BSP_Screen_SetVisible("p1", 0U);
         BSP_Screen_SetVisible("p2", 0U);
     }
@@ -429,13 +437,9 @@ void BSP_Screen_SetGuideBPM(uint8_t bpm)
     {
         BSP_Screen_SetText("t0", "txt", buf);
     }
-    else
-    {
-        BSP_Screen_SetText("t1", "txt", buf);
-        BSP_Screen_SetText("t2", "txt", buf);
-        BSP_Screen_SetText("t7", "txt", buf);
-        BSP_Screen_SetText("t0", "txt", buf);
-    }
+    /* 注意：切勿在此增加 else 兜底盲目覆写 t0, t1, t2！
+     * 在 Page 11 (elec) 上，t0 为“电刺激模式”，t1 为“通道一”，t2 为“通道二”，
+     * 若盲目覆写会导致电刺激界面的模式和通道名被错误篡改为 "10次/分钟" */
 }
 
 /**
@@ -498,14 +502,17 @@ void BSP_Screen_SetRemainTimeSec(uint16_t remain_sec)
 }
 
 /**
- * @brief  更新蓝牙连接状态显示（"已连接" / "未连接"）
- * @param  connected: 1=已连接，0=未连接
+ * @brief  更新蓝牙开启状态显示（"开启" / "关闭"）
+ * @param  connected: 1=开启，0=关闭
  * @retval 无
  */
 void BSP_Screen_SetBleStatus(uint8_t connected)
 {
-    /* GBK 编码：已连接=\xD2\xD1\xC1\xAC\xBD\xD3, 未连接=\xCE\xB4\xC1\xAC\xBD\xD3 */
-    const char *status_str = connected ? "\xD2\xD1\xC1\xAC\xBD\xD3" : "\xCE\xB4\xC1\xAC\xBD\xD3";
+    /* GBK 编码：开启=\xBF\xAA\xC6\xF4, 关闭=\xB9\xD8\xB1\xD5 */
+    const char *status_str = connected ? "\xBF\xAA\xC6\xF4" : "\xB9\xD8\xB1\xD5";
+
+    /* 同步屏幕全局变量 start.bt_en.val，确保设置页与各治疗界面数据一致 */
+    BSP_Screen_SetNum("start.bt_en", "val", connected ? 1 : 0);
 
     if (s_current_screen_page == SCREEN_PAGE_JIANYI)
     {
@@ -544,15 +551,15 @@ void BSP_Screen_SetElectrodeWarn(uint8_t ch, uint8_t dropped)
 }
 
 /**
- * @brief  更新右上角电池电量显示（同步 start.bat.val 与进度条 j1.val）
+ * @brief  更新右上角电池电量显示
+ * @note   用户明确要求：“电池图标的问题暂定不进行变化控制，下位机不参与赋值”
+ *         故此处保持空操作，不发送任何指令篡改屏幕工程默认满绿图标
  * @param  pct: 电量百分比
  * @retval 无
  */
 void BSP_Screen_SetBattery(uint8_t pct)
 {
-    if (pct > 100U) pct = 100U;
-    BSP_Screen_SetNum("start.bat", "val", (int32_t)pct);
-    BSP_Screen_SetNum("j1", "val", (int32_t)pct);
+    (void)pct;
 }
 
 /**
@@ -578,9 +585,12 @@ void BSP_Screen_SetStimParams(uint8_t freq_hz, const uint8_t levels[3])
  */
 void BSP_Screen_SetSettingsDisplay(uint8_t vol, uint8_t timer_min, uint8_t ble_on)
 {
-    BSP_Screen_SetNum("vol",   "val", (int32_t)vol);
-    BSP_Screen_SetNum("timer", "val", (int32_t)timer_min);
-    BSP_Screen_SetNum("ble",   "val", ble_on ? 1 : 0);
+    (void)ble_on;
+    /* 同步屏幕工程实际使用的全局变量 start.set_vol, start.set_time */
+    BSP_Screen_SetNum("start.set_vol",  "val", (int32_t)vol);
+    BSP_Screen_SetNum("start.set_time", "val", (int32_t)timer_min);
+    /* 关键保护（问题1 & 问题3）：严禁在此下发 start.bt_en.val 覆写屏幕内部全局变量！
+     * 屏幕上的蓝牙开关状态由用户点击并在屏幕内部维持，MCU 若在此强行下发会冲掉用户最新配置 */
 }
 
 /**
