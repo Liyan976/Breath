@@ -99,6 +99,18 @@ void     BSP_Screen_SetText(const char *obj, const char *attr, const char *txt);
 void     BSP_Screen_SetVisible(const char *obj, uint8_t visible);
 
 /* ================= 业务语义界面刷新接口 ================= */
+typedef enum {
+    SCREEN_QUERY_NONE = 0,
+    SCREEN_QUERY_SET_VOL,
+    SCREEN_QUERY_BT_EN,
+    SCREEN_QUERY_SET_TIME
+} ScreenQueryState_t;
+
+void     BSP_Screen_QueryVolume(void);
+void     BSP_Screen_QueryBleEnable(void);
+ScreenQueryState_t BSP_Screen_GetPendingQuery(void);
+void     BSP_Screen_ClearPendingQuery(void);
+
 uint8_t  BSP_Screen_IsTherapyPage(uint8_t page);
 void     BSP_Screen_SetControlBtnPic(uint8_t is_running);
 void     BSP_Screen_SetCurrentPage(uint8_t page_id);

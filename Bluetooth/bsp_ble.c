@@ -42,8 +42,7 @@ void BSP_BLE_Init(BleRxCallback_t cb)
     s_data_ready_flag = 0U;
 
     HAL_GPIO_WritePin(BLE_MOD_GPIO_Port, BLE_MOD_Pin, GPIO_PIN_SET); /* Transparent mode */
-    HAL_GPIO_WritePin(BLE_WKP_GPIO_Port, BLE_WKP_Pin, GPIO_PIN_SET);
-    BSP_BLE_Reset();
+    BSP_BLE_SetEnabled(0U); /* 默认关闭蓝牙：拉低 BLE_RST 强行硬件复位，禁止广播与搜索 */
     HAL_UART_Receive_IT(&huart1, &s_rx_byte_it, 1U);
 }
 
@@ -51,13 +50,27 @@ void BSP_BLE_Reset(void)
 {
     HAL_GPIO_WritePin(BLE_RST_GPIO_Port, BLE_RST_Pin, GPIO_PIN_RESET);
     HAL_Delay(10U);
-    HAL_GPIO_WritePin(BLE_RST_GPIO_Port, BLE_RST_Pin, GPIO_PIN_SET);
+    if (s_ble_enabled)
+    {
+        HAL_GPIO_WritePin(BLE_RST_GPIO_Port, BLE_RST_Pin, GPIO_PIN_SET);
+    }
 }
 
 void BSP_BLE_SetEnabled(uint8_t enable)
 {
     s_ble_enabled = enable ? 1U : 0U;
-    HAL_GPIO_WritePin(BLE_WKP_GPIO_Port, BLE_WKP_Pin, s_ble_enabled ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    if (s_ble_enabled)
+    {
+        /* 开启蓝牙：拉高 BLE_RST 解除硬件复位，拉低 BLE_WKP 唤醒串口通信，开始广播供 App 搜索连接 */
+        HAL_GPIO_WritePin(BLE_WKP_GPIO_Port, BLE_WKP_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BLE_RST_GPIO_Port, BLE_RST_Pin, GPIO_PIN_SET);
+    }
+    else
+    {
+        /* 关闭蓝牙：拉低 BLE_RST 强行将 E104-BT5005A 锁定在复位态，射频彻底关断，App 无法搜索或连接 */
+        HAL_GPIO_WritePin(BLE_RST_GPIO_Port, BLE_RST_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BLE_WKP_GPIO_Port, BLE_WKP_Pin, GPIO_PIN_SET);
+    }
 }
 
 uint8_t BSP_BLE_IsConnected(void)

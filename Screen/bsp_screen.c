@@ -365,22 +365,21 @@ void BSP_Screen_SetBreathArrow(uint8_t phase)
 {
     if (s_current_screen_page == SCREEN_PAGE_ELEC || !BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
 
-    /* 确保屏幕自带定时器 tm0 关闭，防止其 50ms 周期自带粗糙逻辑反向覆盖箭头 */
+    /* 确保屏幕自带定时器 tm0 与 tm_sec 关闭并失效，防止屏幕自带粗糙逻辑反向覆盖箭头或倒计时 */
     BSP_Screen_SendRawCmd("tm0.en=0");
+    BSP_Screen_SendRawCmd("tm_sec.en=0");
 
     if (phase == 1U)
     {
-        /* 吸气 (Inhale) -> 气体吸入胸腔，指示向左 (p2 为左箭头图片 pic=12) */
-        BSP_Screen_SetVisible("p1", 0U);
-        BSP_Screen_SetVisible("p2", 1U);
-        BSP_Screen_SetNum("start.breath_phase", "val", 1);
+        /* 吸气 (Inhale, 0%->100% 充盈) -> 引导吸气显示左箭头 (p1 为左箭头图片 pic=12)，隐藏右箭头 p2 */
+        BSP_Screen_SetVisible("p1", 1U);
+        BSP_Screen_SetVisible("p2", 0U);
     }
     else if (phase == 2U)
     {
-        /* 呼气 (Exhale) -> 气体呼出胸腔，指示向右 (p1 为右箭头图片 pic=13) */
-        BSP_Screen_SetVisible("p1", 1U);
-        BSP_Screen_SetVisible("p2", 0U);
-        BSP_Screen_SetNum("start.breath_phase", "val", 0);
+        /* 呼气 (Exhale, 100%->0% 排空) -> 引导呼气显示右箭头 (p2 为右箭头图片 pic=13)，隐藏左箭头 p1 */
+        BSP_Screen_SetVisible("p1", 0U);
+        BSP_Screen_SetVisible("p2", 1U);
     }
     else
     {
@@ -460,8 +459,17 @@ void BSP_Screen_SetRemainTimeSec(uint16_t remain_sec)
     uint16_t sec = remain_sec % 60U;
     snprintf(buf, sizeof(buf), "%02u:%02u", min, sec);
 #else
-    /* 格式 2（需求要求）：整分钟递减加中文“xx分钟”，GBK 编码：分=\xB7\xD6, 钟=\xD6\xD3 */
-    uint16_t disp_min = (remain_sec + 59U) / 60U;
+    /* 格式 2（需求要求）：整分钟递减加中文“xx分钟”，GBK 编码：分=\xB7\xD6, 钟=\xD6\xD3
+     * 关键修复（问题4）：0秒时必须严格显示为 "0分钟"，不可向上取整显示为 "1分钟" */
+    uint16_t disp_min;
+    if (remain_sec == 0U)
+    {
+        disp_min = 0U;
+    }
+    else
+    {
+        disp_min = (remain_sec + 59U) / 60U;
+    }
     snprintf(buf, sizeof(buf), "%u\xB7\xD6\xD6\xD3", (unsigned)disp_min);
 #endif
 
@@ -534,6 +542,14 @@ void BSP_Screen_SetBleStatus(uint8_t connected)
     {
         BSP_Screen_SetText("t5", "txt", status_str);
     }
+    else if (s_current_screen_page == SCREEN_PAGE_JIANYISET ||
+             s_current_screen_page == SCREEN_PAGE_FANKUISET ||
+             s_current_screen_page == SCREEN_PAGE_ELECSET ||
+             s_current_screen_page == SCREEN_PAGE_LIANHESET1 ||
+             s_current_screen_page == SCREEN_PAGE_LIANHESET2)
+    {
+        BSP_Screen_SetText("bt0", "txt", status_str);
+    }
 }
 
 /**
@@ -600,10 +616,44 @@ void BSP_Screen_SetSettingsDisplay(uint8_t vol, uint8_t timer_min, uint8_t ble_o
  */
 void BSP_Screen_ShowFinished(uint16_t valid_min)
 {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Treatment finished: %u min", valid_min);
-    BSP_Screen_SetText("end", "txt", buf);
-    BSP_Screen_SetPage("end");
+    (void)valid_min;
+    /* 关键修复（问题4）：屏幕工程中无 "end" 页面，直接在当前治疗运行页面完成结算：
+     * 1) 倒计时精准刷新为 0分钟；
+     * 2) 清空肺部填充与呼吸指示箭头；
+     * 3) 将启停按键重置为“开始”播放图标 (pic=11)；
+     * 4) 彻底禁用并冻结屏幕内部定时器 tm0 与 tm_sec */
+    BSP_Screen_SetRemainTimeSec(0U);
+    BSP_Screen_SetLungFill(0U);
+    BSP_Screen_SetBreathArrow(0U);
+    BSP_Screen_SetControlBtnPic(0U);
+    BSP_Screen_SendRawCmd("start.run.val=0");
+    BSP_Screen_SendRawCmd("tm0.en=0");
+    BSP_Screen_SendRawCmd("tm_sec.en=0");
+    BSP_Screen_SendRawCmd("b1.pic=11");
+}
+
+static volatile ScreenQueryState_t s_pending_query = SCREEN_QUERY_NONE;
+
+void BSP_Screen_QueryVolume(void)
+{
+    s_pending_query = SCREEN_QUERY_SET_VOL;
+    BSP_Screen_SendRawCmd("get start.set_vol.val");
+}
+
+void BSP_Screen_QueryBleEnable(void)
+{
+    s_pending_query = SCREEN_QUERY_BT_EN;
+    BSP_Screen_SendRawCmd("get start.bt_en.val");
+}
+
+ScreenQueryState_t BSP_Screen_GetPendingQuery(void)
+{
+    return s_pending_query;
+}
+
+void BSP_Screen_ClearPendingQuery(void)
+{
+    s_pending_query = SCREEN_QUERY_NONE;
 }
 
 /**

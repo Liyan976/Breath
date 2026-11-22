@@ -33,7 +33,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 App_Therapy_StopToMenu();
                 App_Therapy_ResetBioCalibrationSession();
-                BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME); /* 0001: 欢迎使用呼吸调控仪... */
+                /* 若开机欢迎语尚未播放且芯片不忙，才发起播放，已在播放中则完整播放不打断 */
+                if (!BSP_Audio_IsBusy())
+                {
+                    BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME); /* 0001: 欢迎使用呼吸调控仪... */
+                }
             }
             break;
 
@@ -71,8 +75,10 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 /* 禁用屏幕内部定时器 tm0，防止屏幕自带粗糙逻辑反向翻转呼吸箭头 */
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 同步查询屏幕内部保存的蓝牙开关状态 */
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                /* 关键修复（问题5）：立即更新蓝牙文字状态与下位机严格一致 */
+                BSP_Screen_SetBleStatus(g_app.ble_enabled);
+                /* 同步查询屏幕内部保存的音量档位与蓝牙开关状态 */
+                BSP_Screen_QueryVolume();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -143,7 +149,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 /* 禁用屏幕内部定时器 tm0，防止屏幕自带的粗糙呼吸逻辑与下位机算法冲突闪烁 */
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                BSP_Screen_SetBleStatus(g_app.ble_enabled);
+                BSP_Screen_QueryVolume();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -192,6 +199,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     uint8_t ch3       = frame->raw[7];
                     uint8_t timer_min = (frame->len >= 9U) ? frame->raw[8] : 10U;
                     if (freq_hz < 1U) freq_hz = (g_app.stim_freq_hz >= 1U) ? g_app.stim_freq_hz : 20U;
+                    App_Therapy_SetVolume(g_app.volume);
                     App_Therapy_StartCombo(0U /* 简易呼吸 */, mode_sel, freq_hz, ch1, ch2, ch3, timer_min);
                 }
                 else
@@ -216,7 +224,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                BSP_Screen_SetBleStatus(g_app.ble_enabled);
+                BSP_Screen_QueryVolume();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -249,6 +258,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     BSP_Screen_SendRawCmd("tsw b1,1");
                     BSP_Screen_SendRawCmd("tsw b0,1");
                     BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT);
+                }
+                else if (g_app.sys_state == APP_STATE_BIO_CALIB)
+                {
+                    /* 已经在校准中，切勿重复启动打断播报 */
+                    return;
                 }
                 else
                 {
@@ -308,7 +322,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 /* 禁用屏幕内部定时器 tm0，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                BSP_Screen_SetBleStatus(g_app.ble_enabled);
+                BSP_Screen_QueryVolume();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -343,6 +358,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     BSP_Screen_SendRawCmd("tsw b0,1");
                     BSP_Audio_PlayVoice(AUDIO_VOICE_CLICK_START_PROMPT);
                 }
+                else if (g_app.sys_state == APP_STATE_BIO_CALIB)
+                {
+                    /* 已经在校准中，切勿重复启动打断播报 */
+                    return;
+                }
                 else
                 {
                     /* 首次进入或换模式后进入：启动语音引导检测与采集，按键锁定 */
@@ -375,6 +395,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     uint8_t ch3       = frame->raw[7];
                     uint8_t timer_min = (frame->len >= 9U) ? frame->raw[8] : 10U;
                     if (freq_hz < 1U) freq_hz = (g_app.stim_freq_hz >= 1U) ? g_app.stim_freq_hz : 20U;
+                    App_Therapy_SetVolume(g_app.volume);
                     App_Therapy_StartCombo(1U /* 反馈呼吸 */, mode_sel, freq_hz, ch1, ch2, ch3, timer_min);
                 }
                 else
@@ -405,7 +426,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             if (action == 0x08U)
             {
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                BSP_Screen_SetBleStatus(g_app.ble_enabled);
+                BSP_Screen_QueryVolume();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -445,6 +467,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                     uint8_t ch3       = frame->raw[7]; /* 通道3档位 (0~10) */
                     uint8_t timer_min = (frame->len >= 9U) ? frame->raw[8] : 10U;
                     if (freq_hz < 1U) freq_hz = (g_app.stim_freq_hz >= 1U) ? g_app.stim_freq_hz : 20U;
+                    App_Therapy_SetVolume(g_app.volume);
                     App_Therapy_StartPureStim(mode_sel, freq_hz, ch1, ch2, ch3, timer_min);
                 }
                 else
@@ -469,11 +492,13 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_LIANHESET1: /* Page 13: lianheset1 (联合简易参数设置) */
             if (action == 0x08U)
             {
+                /* 关键修复（问题7）：进入设置界面无条件终止治疗界面正在播放的提示语音 */
+                BSP_Audio_Stop();
                 /* 只要进入设置界面，立即停止当前治疗计时并重置会话，按新时间准备重新开始 */
                 App_Therapy_StopToMenu();
                 App_Therapy_ClearPausedSession();
                 App_Therapy_ResetBioCalibrationSession();
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                BSP_Screen_QueryVolume();
                 BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
             }
             else if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
@@ -494,11 +519,13 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_LIANHESET2: /* Page 14: lianheset2 (联合反馈参数设置) */
             if (action == 0x08U)
             {
+                /* 关键修复（问题7）：进入设置界面无条件终止正在播放的提示语音 */
+                BSP_Audio_Stop();
                 /* 只要进入设置界面，立即停止当前治疗计时并重置会话，按新时间准备重新开始 */
                 App_Therapy_StopToMenu();
                 App_Therapy_ClearPausedSession();
                 /* 关键保留机制：生物反馈设置界面进入时不清除 s_bio_freq_valid，以便返回时保留呼吸频率 */
-                BSP_Screen_SendRawCmd("get start.bt_en.val");
+                BSP_Screen_QueryVolume();
                 BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
             }
             else if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
@@ -541,6 +568,9 @@ static void Screen_HandleTouchFrame(uint8_t page, uint8_t comp_id, uint8_t event
     ScreenFrame_t fake;
     /* 仅响应弹起事件（0x00），避免按下期间重复触发 */
     if (event != 0x00U) return;
+
+    /* 运行与测量页面均已配置完整的 printh 05 协议，屏蔽原生 0x65 触摸帧，防止控件 ID 冲撞 action 产生重入/误判 */
+    if (BSP_Screen_IsTherapyPage(page)) return;
 
     memset(&fake, 0, sizeof(fake));
     fake.header  = SCREEN_FRAME_HDR_CTRL;
@@ -592,9 +622,38 @@ void ScreenTask(void const *argument)
             }
             else if (frame.header == SCREEN_FRAME_HDR_NUM && frame.len >= 5U)
             {
-                /* 串口屏返回的数值帧：raw[1..4] 为 32 位小端整数。用于同步 start.bt_en.val 等屏幕全局变量 */
-                uint8_t ble_en = (frame.raw[1] != 0U) ? 1U : 0U;
-                App_Therapy_SetBleEnable(ble_en);
+                /* 串口屏返回的数值帧：raw[1..4] 为 32 位小端整数。用于同步 start.set_vol.val 与 start.bt_en.val */
+                uint32_t num_val = (uint32_t)frame.raw[1] |
+                                   ((uint32_t)frame.raw[2] << 8) |
+                                   ((uint32_t)frame.raw[3] << 16) |
+                                   ((uint32_t)frame.raw[4] << 24);
+
+                ScreenQueryState_t query = BSP_Screen_GetPendingQuery();
+                if (query == SCREEN_QUERY_SET_VOL)
+                {
+                    uint8_t vol = (num_val > 10U) ? 10U : (uint8_t)num_val;
+                    App_Therapy_SetVolume(vol);
+                    BSP_Screen_ClearPendingQuery();
+                    /* 级联查询蓝牙开关状态 */
+                    BSP_Screen_QueryBleEnable();
+                }
+                else if (query == SCREEN_QUERY_BT_EN)
+                {
+                    uint8_t ble_en = (num_val != 0U) ? 1U : 0U;
+                    App_Therapy_SetBleEnable(ble_en);
+                    BSP_Screen_ClearPendingQuery();
+                }
+                else
+                {
+                    if (num_val <= 1U)
+                    {
+                        App_Therapy_SetBleEnable((uint8_t)num_val);
+                    }
+                    else if (num_val <= 10U)
+                    {
+                        App_Therapy_SetVolume((uint8_t)num_val);
+                    }
+                }
             }
             else if (frame.header == SCREEN_FRAME_HDR_TOUCH) /* 淘晶驰原生触摸帧兜底：0x65 [page] [comp] [event] */
             {
@@ -612,6 +671,13 @@ void ScreenTask(void const *argument)
             {
                 last_lung = g_app.lung_pct;
                 BSP_Screen_SetLungFill(last_lung);
+            }
+
+            if ((tick_cnt % 10U) == 0U && g_app.Breath_Mode != BREATH_MODE_OFF)
+            {
+                /* 周期性抑制屏幕内部定时器 tm0 与 tm_sec，防止屏幕意外重新使能覆盖呼吸动画与倒计时 */
+                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm_sec.en=0");
             }
 
             if ((tick_cnt % 10U) == 0U) /* 每 200 ms 检查一次倒计时秒数变化 */

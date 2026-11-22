@@ -14,7 +14,7 @@ extern "C" {
 #define STIM_PEAK_CURRENT_MAX_MA    30.0f
 #define STIM_BOOST_MAX_MV           30000U
 #define STIM_BOOST_MIN_MV           5000U
-#define STIM_ELEC_DROP_DEBOUNCE_MS  5000U
+#define STIM_ELEC_DROP_DEBOUNCE_MS  600U  /* 关键修复（问题6）：由5000ms缩短为600ms，电极脱落后0.6秒内灵敏识别并停疗告警 */
 #define STIM_ELEC_RECOVER_RAMP_MS   3000U
 
 typedef enum {

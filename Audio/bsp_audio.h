@@ -34,6 +34,10 @@ typedef enum {
     AUDIO_VOICE_BGM_RELAX           = 49
 } AudioVoiceId_t;
 
+/* 曲目号规则：N9300 的“指定曲目”用的是 SPI-FLASH 里 FAT 目录中的顺序号（1 起始），
+ * 不是文件名里的数字。0001.mp3~0045.mp3 按顺序写在根目录，
+ * 保证 AUDIO_VOICE_xxx 与 0001~0045 一一对应。 */
+
 /* 频率与定时参数播报常量定义 */
 #define AUDIO_TRACK_FREQ_BASE       14U   /**< 0014: 5次每分钟 (14~19对应5~10次/分) */
 #define AUDIO_TRACK_TIME_BASE       20U   /**< 0020: 5分钟 (20~45对应5~30分钟) */
@@ -61,6 +65,16 @@ void BSP_Audio_Pause(void);
 uint8_t BSP_Audio_IsBusy(void);
 uint8_t BSP_Audio_IsHeadphoneInserted(void);
 void BSP_Audio_GetStatus(AudioStatus_t *out);
+
+/* ================= 调试与状态接口 ================= */
+uint8_t BSP_Audio_IsReady(void);        /**< 1 = N9300 上电初始化已完成，可发指令 */
+uint8_t BSP_Audio_GetLastReply(void);   /**< 最近一次收到的应答命令码（0=没收到过） */
+uint8_t BSP_Audio_GetLastError(void);   /**< 0=正常；01=串口数据错 02=找不到盘符 03=没有可播放盘符 04=文件播放错误 */
+uint16_t BSP_Audio_GetCurrentTrack(void); /**< 最近一次下发的曲目号 */
+
+/* ================= 循环播放测试（不依赖屏幕事件） ================= */
+void BSP_Audio_LoopTestStart(uint16_t first_track, uint16_t last_track, uint32_t interval_ms);
+void BSP_Audio_LoopTestStop(void);
 
 #ifdef __cplusplus
 }

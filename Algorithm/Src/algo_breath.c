@@ -3,9 +3,9 @@
 #include <string.h>
 
 #define BREATH_BUF_LEN          64U
-#define VALLEY_MIN_INTERVAL_MS  1000U  /* <= 60 BPM */
-#define VALLEY_MAX_INTERVAL_MS  15000U /* >= 4 BPM */
-#define VALLEY_AMP_MIN_THRESH   4.0f
+#define VALLEY_MIN_INTERVAL_MS  2000U  /* <= 30 BPM (真实人体呼吸在6~20次/分，滤除微小高频抖动) */
+#define VALLEY_MAX_INTERVAL_MS  12000U /* >= 5 BPM (最长间隔12秒) */
+#define VALLEY_AMP_MIN_THRESH   8.0f   /* 关键修复（问题8）：波谷识别阈值从25.0f恢复为8.0f(~6.4mV)，真实人体呼吸可灵敏识别 */
 #define GBPM_MIN                5U
 #define GBPM_MAX                10U
 
@@ -29,6 +29,7 @@ static uint8_t  s_calib_ready = 0U;
 static BreathPhase_t s_phase = BREATH_PHASE_IDLE;
 static uint32_t      s_phase_elapsed_ms = 0U;
 static uint8_t       s_active_bpm = 10U;
+static uint8_t       s_guide_just_started = 0U; /* 仅在启动引导时触发一次初始相位变更 */
 
 static void on_valid_valley(uint32_t now_ms)
 {
@@ -53,27 +54,37 @@ static void on_valid_valley(uint32_t now_ms)
     cbpm = 60000.0f / (float)dt;
     s_real_cbpm = (uint8_t)floorf(cbpm + 0.5f);
 
-    s_cbpm_win[s_cbpm_win_idx++] = cbpm;
-    s_cbpm_total++;
-
     if (s_cbpm_win_idx < 3U)
     {
-        return;
-    }
-    s_cbpm_win_idx = 0U;
-
-    avg3 = (s_cbpm_win[0] + s_cbpm_win[1] + s_cbpm_win[2]) / 3.0f;
-
-    if (!s_calib_ready)
-    {
-        int32_t g0 = (int32_t)floorf(avg3 + 0.5f);
-        if (g0 < (int32_t)GBPM_MIN) g0 = GBPM_MIN;
-        if (g0 > (int32_t)GBPM_MAX) g0 = GBPM_MAX;
-        s_bio_gbpm = (uint8_t)g0;
-        s_calib_ready = 1U;
+        s_cbpm_win[s_cbpm_win_idx++] = cbpm;
     }
     else
     {
+        s_cbpm_win[0] = s_cbpm_win[1];
+        s_cbpm_win[1] = s_cbpm_win[2];
+        s_cbpm_win[2] = cbpm;
+    }
+    s_cbpm_total++;
+
+    if (!s_calib_ready)
+    {
+        if (s_cbpm_total >= 2U)
+        {
+            float avg = 0.0f;
+            uint8_t k;
+            for (k = 0U; k < s_cbpm_win_idx; k++) avg += s_cbpm_win[k];
+            avg /= (float)s_cbpm_win_idx;
+
+            int32_t g0 = (int32_t)floorf(avg + 0.5f);
+            if (g0 < (int32_t)GBPM_MIN) g0 = GBPM_MIN;
+            if (g0 > (int32_t)GBPM_MAX) g0 = GBPM_MAX;
+            s_bio_gbpm = (uint8_t)g0;
+            s_calib_ready = 1U;
+        }
+    }
+    else
+    {
+        avg3 = (s_cbpm_win[0] + s_cbpm_win[1] + s_cbpm_win[2]) / 3.0f;
         if (avg3 <= (float)s_bio_gbpm)
         {
             uint8_t step = (s_bio_gbpm > 10U) ? 2U : 1U;
@@ -136,12 +147,13 @@ void Algo_Breath_FeedSample(uint16_t raw_adc, uint32_t now_ms)
     {
         s_baseline = raw;
     }
-    s_baseline = 0.98f * s_baseline + 0.02f * raw;
+    /* 关键修复（问题2）：基线跟踪时间常数放缓至约10秒（50Hz下系数 0.002），防止将真实人体的慢呼吸信号作为漂移滤除 */
+    s_baseline = 0.998f * s_baseline + 0.002f * raw;
     ac = raw - s_baseline;
-    s_lpf = 0.75f * s_lpf + 0.25f * ac;
+    s_lpf = 0.85f * s_lpf + 0.15f * ac;
 
-    /* 当检测到有效呼吸扰动幅度 (>= 6.0f) 或已成功检测到波谷时，刷新信号活跃时间戳 */
-    if (s_sample_cnt >= 25U && (fabsf(s_lpf) >= (VALLEY_AMP_MIN_THRESH * 1.5f) || s_cbpm_total > 0U))
+    /* 当检测到有效呼吸扰动幅度 (>= 25.0f) 或已成功检测到波谷时，刷新信号活跃时间戳 */
+    if (s_sample_cnt >= 25U && (fabsf(s_lpf) >= VALLEY_AMP_MIN_THRESH || s_cbpm_total > 0U))
     {
         s_last_signal_ms = now_ms;
     }
@@ -194,12 +206,14 @@ void Algo_Breath_StartGuide(uint8_t initial_bpm)
     s_active_bpm = initial_bpm;
     s_phase = BREATH_PHASE_INHALE;
     s_phase_elapsed_ms = 0U;
+    s_guide_just_started = 1U;
 }
 
 void Algo_Breath_StopGuide(void)
 {
     s_phase = BREATH_PHASE_IDLE;
     s_phase_elapsed_ms = 0U;
+    s_guide_just_started = 0U;
 }
 
 void Algo_Breath_StepGuide(uint32_t dt_ms, uint8_t target_bpm, BreathGuideOut_t *out)
@@ -224,9 +238,11 @@ void Algo_Breath_StepGuide(uint32_t dt_ms, uint8_t target_bpm, BreathGuideOut_t 
     if (target_bpm < GBPM_MIN) target_bpm = GBPM_MIN;
     if (target_bpm > GBPM_MAX) target_bpm = GBPM_MAX;
 
-    if (s_phase_elapsed_ms == 0U && s_phase == BREATH_PHASE_INHALE)
+    if (s_guide_just_started != 0U)
     {
-        /* Latch new BPM smoothly at start of inhale cycle */
+        /* 关键修复（问题2）：仅在刚启动引导的首个周期置位一次 phase_changed，
+         * 杜绝后续呼气结束回到吸气时因 s_phase_elapsed_ms==0 连发两个 phase_changed 导致“吸、吸”双重播报 */
+        s_guide_just_started = 0U;
         s_active_bpm = target_bpm;
         out->phase_changed = 1U;
     }
@@ -300,10 +316,37 @@ uint8_t Algo_Breath_IsSignalDetected(void)
 {
     if (s_sample_cnt >= 25U && s_last_signal_ms != 0U)
     {
-        if ((s_now_ms - s_last_signal_ms) <= 4500U)
+        if ((s_now_ms - s_last_signal_ms) <= 6500U)
         {
             return 1U;
         }
     }
     return 0U;
+}
+
+uint8_t Algo_Breath_FinalizeBioCalib(void)
+{
+    if (s_calib_ready)
+    {
+        return s_bio_gbpm;
+    }
+
+    if (s_cbpm_total >= 1U && s_cbpm_win_idx > 0U)
+    {
+        float sum = 0.0f;
+        uint8_t i;
+        for (i = 0U; i < s_cbpm_win_idx; i++)
+        {
+            sum += s_cbpm_win[i];
+        }
+        sum /= (float)s_cbpm_win_idx;
+        int32_t g0 = (int32_t)floorf(sum + 0.5f);
+        if (g0 < (int32_t)GBPM_MIN) g0 = GBPM_MIN;
+        if (g0 > (int32_t)GBPM_MAX) g0 = GBPM_MAX;
+        s_bio_gbpm = (uint8_t)g0;
+        s_calib_ready = 1U;
+        return s_bio_gbpm;
+    }
+
+    return GBPM_MIN; /* Fallback to 5 BPM */
 }

@@ -3,19 +3,20 @@
 #include "tim.h"
 #include <string.h>
 
-/* 50 us TIM2 tick constants: 250 us pulse width = 5 ticks, 50 us dead-time = 1 tick */
-#define PULSE_WIDTH_TICKS       5U
+/* 50 us TIM2 tick constants: 400 us pulse width = 8 ticks (倍增电荷量，对比原 250us 显著增强肌肉收缩感), 50 us dead-time = 1 tick */
+#define PULSE_WIDTH_TICKS       8U
 #define PULSE_DEADTIME_TICKS    1U
 #define TICK_RATE_HZ            20000U
 
 /* Schematic Boost divider: Rtop=100k, Rbot=4.7k -> Vout_mV = raw * 3300 * 1047 / (4095 * 47) */
 #define BOOST_ADC_TO_MV(raw)    ((uint32_t)(raw) * 1795U / 100U)
 
-/* Constant current DAC duty for 30 mA across 10 ohm shunt:
- * V_set_max = 0.300 V; V_pwm_div = 3.3 V * (20 / 23.74) = 2.780 V
- * CCR_max = 8400 * (0.300 / 2.780) = 906
+/* Constant current DAC duty for 2x stimulus intensity across 10 ohm shunt:
+ * 原基准：30 mA 对应 CCR = 906，单相脉宽 250 us，单相电荷 Q_old = 30mA * 250us = 7500 nC
+ * 2倍强度调校：单相脉宽提升至 400 us (8 ticks)，限流上限提升至 37.5 mA (CCR = 1133)
+ * 单相电荷 Q_new = 37.5mA * 400us = 15000 nC (严格达成 2.0 倍理论刺激强度)
  */
-#define CC_DAC_CCR_30MA         906U
+#define CC_DAC_CCR_MAX          1133U
 
 /* Electrode drop threshold on LM324 output (~120 mV -> ~150 ADC counts) */
 #define ELEC_VALID_ADC_THRESH   150U
@@ -90,7 +91,7 @@ static void set_boost_ccr(uint8_t ch, uint32_t ccr)
 
 static void set_cc_dac_ccr(uint8_t ch, uint32_t ccr)
 {
-    if (ccr > CC_DAC_CCR_30MA) ccr = CC_DAC_CCR_30MA;
+    if (ccr > CC_DAC_CCR_MAX) ccr = CC_DAC_CCR_MAX;
     if (ch == 0U)      __HAL_TIM_SET_COMPARE(&htim3,  TIM_CHANNEL_1, ccr);
     else if (ch == 1U) __HAL_TIM_SET_COMPARE(&htim3,  TIM_CHANNEL_2, ccr);
     else if (ch == 2U) __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, ccr);
@@ -322,7 +323,7 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
             }
 
             /* Update Constant-Current DAC PWM */
-            uint32_t dac_ccr = (uint32_t)((s_current_level_f[ch] / (float)STIM_LEVEL_MAX) * (float)CC_DAC_CCR_30MA);
+            uint32_t dac_ccr = (uint32_t)((s_current_level_f[ch] / (float)STIM_LEVEL_MAX) * (float)CC_DAC_CCR_MAX);
             set_cc_dac_ccr(ch, dac_ccr);
         }
 
