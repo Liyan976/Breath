@@ -87,10 +87,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYI: /* Page 4: jianyi (单纯简易呼吸引导测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
-                /* 禁用屏幕内部定时器 tm0，防止屏幕自带粗糙逻辑反向翻转呼吸箭头 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞反向翻转箭头 */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -126,8 +124,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                /* 启动时再次关闭屏幕 tm0 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                /* 启动时再次关闭屏幕 tm0 与 tm_sec */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (App_Therapy_IsPausedInPage(SCREEN_PAGE_JIANYI))
                 {
@@ -148,7 +146,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_Pause();
                 BSP_Screen_SetLungFill(0U);
                 BSP_Screen_SetBreathArrow(0U);
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
             }
             else if (action == 0x02U || action == 0x0FU) /* 返回主页 */
             {
@@ -159,10 +157,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYIELEC: /* Page 6: jianyielec (简易呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                /* 禁用屏幕内部定时器 tm0，防止屏幕自带的粗糙呼吸逻辑与下位机算法冲突闪烁 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞 */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -195,8 +191,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                /* 屏幕 b1 启动事件会置位 tm0.en=1，下位机覆写关闭 tm0 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                /* 屏幕 b1 启动事件会置位 tm0.en=1，下位机覆写关闭 tm0 与 tm_sec */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (App_Therapy_IsPausedInPage(SCREEN_PAGE_JIANYIELEC))
                 {
@@ -224,7 +220,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_Pause();
                 BSP_Screen_SetLungFill(0U);
                 BSP_Screen_SetBreathArrow(0U);
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
             }
             else if (action == 0x02U || action == 0x0FU)
             {
@@ -235,9 +231,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUI: /* Page 7: fankui (单纯生物反馈呼吸测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
-                BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -287,7 +282,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 /* 采集中禁止响应启动 */
                 if (g_app.sys_state == APP_STATE_BIO_CALIB)
@@ -320,7 +315,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_Pause();
                 BSP_Screen_SetLungFill(0U);
                 BSP_Screen_SetBreathArrow(0U);
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
             }
             else if (action == 0x02U || action == 0x0FU)
             {
@@ -332,10 +327,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUIELEC: /* Page 9: fankuielec (生物反馈呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                /* 禁用屏幕内部定时器 tm0，防止屏幕自带逻辑冲突 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -386,8 +379,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                /* 屏幕 b1 启动事件会置位 tm0.en=1，下位机覆写关闭 tm0 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                /* 屏幕 b1 启动事件会置位 tm0.en=1，下位机覆写关闭 tm0 与 tm_sec */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (g_app.sys_state == APP_STATE_BIO_CALIB)
                 {
@@ -425,7 +418,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 /* 关键修复（问题6）：屏幕暂停事件未清除箭头，下位机显式清除箭头与肺部动画 */
                 BSP_Screen_SetLungFill(0U);
                 BSP_Screen_SetBreathArrow(0U);
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
             }
             else if (action == 0x02U || action == 0x0FU)
             {
@@ -437,9 +430,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_ELEC: /* Page 11: elec (单纯电刺激治疗测量运行) */
             if (action == 0x08U)
             {
-                BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
-                BSP_Screen_QueryBleEnable();
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -464,7 +455,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x01U) /* 启动 / 继续 */
             {
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (App_Therapy_IsPausedInPage(SCREEN_PAGE_ELEC))
                 {
@@ -490,7 +481,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             else if (action == 0x00U)
             {
                 App_Therapy_Pause();
-                BSP_Screen_SendRawCmd("tm0.en=0");
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
             }
             else if (action == 0x02U || action == 0x0FU)
             {
@@ -652,7 +643,6 @@ void ScreenTask(void const *argument)
                     uint8_t ble_en = (num_val != 0U) ? 1U : 0U;
                     App_Therapy_SetBleEnable(ble_en);
                     BSP_Screen_ClearPendingQuery();
-                    BSP_Screen_QueryVolume();
                 }
                 else
                 {
@@ -684,11 +674,10 @@ void ScreenTask(void const *argument)
                 BSP_Screen_SetLungFill(last_lung);
             }
 
-            if ((tick_cnt % 10U) == 0U && g_app.Breath_Mode != BREATH_MODE_OFF)
+            if ((tick_cnt % 5U) == 0U && g_app.Breath_Mode != BREATH_MODE_OFF)
             {
-                /* 周期性抑制屏幕内部定时器 tm0 与 tm_sec，防止屏幕意外重新使能覆盖呼吸动画与倒计时 */
-                BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SendRawCmd("tm_sec.en=0");
+                /* 每 100ms 周期性抑制屏幕内部定时器 tm0 与 tm_sec，彻底杜绝屏幕自带逻辑复苏引发动画跑飞 */
+                BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
             }
 
             if ((tick_cnt % 10U) == 0U) /* 每 200 ms 检查一次倒计时秒数变化 */

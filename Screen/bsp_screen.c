@@ -372,27 +372,22 @@ void BSP_Screen_SetBreathArrow(uint8_t phase)
         return;
     }
 
-    /* 确保屏幕自带定时器 tm0 与 tm_sec 关闭并失效，防止屏幕自带粗糙逻辑反向覆盖箭头或倒计时 */
-    BSP_Screen_SendRawCmd("tm0.en=0");
-    BSP_Screen_SendRawCmd("tm_sec.en=0");
-
+    /* 关键修复（问题4）：合并为单条原子指令发送，杜绝分包延迟和串口互斥锁抖动，
+     * 同时强力抑制屏幕内部 tm0 与 tm_sec，确保吸气向左箭头 p1、呼气向右箭头 p2 严格同步 */
     if (phase == 1U)
     {
         /* 吸气 -> 显示向左箭头 p1，隐藏向右箭头 p2 */
-        BSP_Screen_SendRawCmd("vis p1,1");
-        BSP_Screen_SendRawCmd("vis p2,0");
+        BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0;vis p1,1;vis p2,0");
     }
     else if (phase == 2U)
     {
         /* 呼气 -> 隐藏向左箭头 p1，显示向右箭头 p2 */
-        BSP_Screen_SendRawCmd("vis p1,0");
-        BSP_Screen_SendRawCmd("vis p2,1");
+        BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0;vis p1,0;vis p2,1");
     }
     else
     {
         /* 全部隐藏 */
-        BSP_Screen_SendRawCmd("vis p1,0");
-        BSP_Screen_SendRawCmd("vis p2,0");
+        BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0;vis p1,0;vis p2,0");
     }
 }
 

@@ -123,6 +123,8 @@ static uint16_t s_loop_cur      = AUDIO_BOOT_LOOP_FIRST;
 static uint32_t s_loop_interval = AUDIO_BOOT_LOOP_INTERVAL_MS;
 static uint32_t s_loop_next_tick = 0U;
 static uint16_t s_last_track    = 0U;           /* 最近一次下发的曲目号 */
+static uint8_t  s_current_hw_vol = 0xFFU;
+static uint8_t  s_pending_deferred_hw_vol = 0xFFU;
 
 /* ======================= 底层：串口发送 ======================= */
 static void uart2_tx_raw(const uint8_t *buf, uint16_t len)
@@ -420,6 +422,7 @@ void BSP_Audio_Init(void)
     s_last_track    = 0U;
     s_halt_pending  = 0U;
     s_halt_tick     = 0U;
+    s_pending_deferred_hw_vol = 0xFFU;
 
     s_loop_first     = AUDIO_BOOT_LOOP_FIRST;
     s_loop_last      = AUDIO_BOOT_LOOP_LAST;
@@ -564,6 +567,17 @@ void BSP_Audio_Poll(void)
         }
     }
 
+    /* 5.5 延期音量更新：语音播放完毕且处于空闲状态时，自动补发之前被推迟的音量设置 */
+    if ((s_pending_deferred_hw_vol != 0xFFU) && (s_seg_active == 0U) && !audio_req_has(AOP_PLAY))
+    {
+        uint8_t busy = (HAL_GPIO_ReadPin(AUDIO_BUSY_GPIO_Port, AUDIO_BUSY_Pin) == GPIO_PIN_RESET) ? 1U : 0U;
+        if (!busy)
+        {
+            audio_req_replace_or_push(AOP_VOL, (uint16_t)s_pending_deferred_hw_vol);
+            s_pending_deferred_hw_vol = 0xFFU;
+        }
+    }
+
     /* 6. 开机循环播放测试 */
     if ((s_loop_on != 0U) && (s_req_cnt == 0U) && (s_seg_active == 0U))
     {
@@ -575,8 +589,6 @@ void BSP_Audio_Poll(void)
         }
     }
 }
-
-static uint8_t s_current_hw_vol = 0xFFU;
 
 void BSP_Audio_SetVolume(uint8_t ui_vol_0_to_10)
 {
@@ -592,6 +604,16 @@ void BSP_Audio_SetVolume(uint8_t ui_vol_0_to_10)
     }
     s_current_hw_vol = hw_vol;
 
+    /* 关键修复（问题1）：若芯片正在播放提示音（如0007生物反馈长语音或呼吸引导语音），
+     * 绝不下发串口音量指令，避免 N9300 收到串口指令后重置/截断当前音频！
+     * 保存至 s_pending_deferred_hw_vol，在段落播放完毕空闲时自动补发 */
+    if (s_seg_active != 0U || audio_req_has(AOP_PLAY) != 0U || BSP_Audio_IsBusy())
+    {
+        s_pending_deferred_hw_vol = hw_vol;
+        return;
+    }
+
+    s_pending_deferred_hw_vol = 0xFFU;
     audio_req_replace_or_push(AOP_VOL, hw_vol);   /* 音量只保留最新一条，不占队、不滞后 */
 }
 
@@ -691,6 +713,7 @@ void BSP_Audio_Stop(void)
     s_q_idx         = 0U;
     s_seg_active    = 0U;
     s_halt_pending  = 0U;
+    s_pending_deferred_hw_vol = 0xFFU;
     /* 关键修复（问题7）：直接下发硬件停止指令并清空队列，确保切页面时残存语音立即终止 */
     n930x_stop();
     s_last_tx_tick  = HAL_GetTick();

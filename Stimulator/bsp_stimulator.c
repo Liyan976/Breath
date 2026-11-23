@@ -219,10 +219,27 @@ void BSP_Stim_SetRuntimeFreqHz(uint8_t freq_hz)
 
 void BSP_Stim_SetComboOverride(uint8_t enable_override, uint8_t gate_on, uint8_t runtime_freq_hz)
 {
+    uint8_t old_gate = s_gate_on;
     s_combo_override = enable_override ? 1U : 0U;
     if (s_combo_override)
     {
-        s_gate_on = gate_on ? 1U : 0U;
+        uint8_t new_gate = gate_on ? 1U : 0U;
+        if (!old_gate && new_gate)
+        {
+            /* 关键修复（问题3）：联合模式由呼气(静息/无刺激)转为吸气(开始刺激)瞬间，
+             * 立即重置所有通道的最后有效脉冲时间为当前时间，杜绝将静息期误算入脱落防抖导致误播“开始治疗” */
+            uint32_t now = HAL_GetTick();
+            uint8_t c;
+            for (c = 0U; c < STIM_CH_COUNT; c++)
+            {
+                if (!s_elec_dropped[c])
+                {
+                    s_last_valid_pulse_ms[c] = now;
+                }
+                s_elec_recover_start_ms[c] = 0U;
+            }
+        }
+        s_gate_on = new_gate;
         BSP_Stim_SetRuntimeFreqHz(runtime_freq_hz);
     }
 }
@@ -241,12 +258,27 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
     /* Standalone wave modulation (skipped when Combined Mode controls phase sync) */
     if (!s_combo_override)
     {
+        uint8_t old_gate = s_gate_on;
         wave_phase_ms += 10U;
         if (s_wave_type == STIM_WAVE_INTERMITTENT)
         {
             /* 断续波：工作 15s，停 5s（周期 20000ms） */
             uint32_t t = wave_phase_ms % 20000U;
             s_gate_on = (t < 15000U) ? 1U : 0U;
+            if (!old_gate && s_gate_on)
+            {
+                /* 关键修复（问题2）：纯电刺激断续波由停歇5s转为工作15s的上升沿，
+                 * 立即重置脉冲时间戳，杜绝工作首刻误报脱落引发播报“开始治疗” */
+                uint8_t c;
+                for (c = 0U; c < STIM_CH_COUNT; c++)
+                {
+                    if (!s_elec_dropped[c])
+                    {
+                        s_last_valid_pulse_ms[c] = now_ms;
+                    }
+                    s_elec_recover_start_ms[c] = 0U;
+                }
+            }
             BSP_Stim_SetRuntimeFreqHz(s_base_freq_hz);
         }
         else if (s_wave_type == STIM_WAVE_DENSE_SPARSE)
@@ -335,6 +367,17 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
                     s_elec_recover_start_ms[ch] = 0U;
                 }
             }
+        }
+        else
+        {
+            /* 关键修复（问题2 & 问题3）：处于断续波停歇期或呼气暂停期间（!s_gate_on），
+             * 未脱落通道持续刷新脉冲时间戳为当前时间，防止门闸重新打开首个tick误判脱落；
+             * 同时暂停恢复确认计时器，严防在无刺激输出期间误确认恢复 */
+            if (!s_elec_dropped[ch])
+            {
+                s_last_valid_pulse_ms[ch] = now_ms;
+            }
+            s_elec_recover_start_ms[ch] = 0U;
         }
         s_elec_peak_adc[ch] = 0U;
 
