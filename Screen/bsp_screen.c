@@ -363,7 +363,14 @@ void BSP_Screen_SetLungFill(uint8_t pct_0_to_100)
  */
 void BSP_Screen_SetBreathArrow(uint8_t phase)
 {
-    if (s_current_screen_page == SCREEN_PAGE_ELEC || !BSP_Screen_IsTherapyPage(s_current_screen_page)) return;
+    /* 核心保护：严禁在非呼吸治疗运行页面发送，杜绝误伤 Page 1/Page 2 菜单按钮 */
+    if (s_current_screen_page != SCREEN_PAGE_JIANYI &&
+        s_current_screen_page != SCREEN_PAGE_JIANYIELEC &&
+        s_current_screen_page != SCREEN_PAGE_FANKUI &&
+        s_current_screen_page != SCREEN_PAGE_FANKUIELEC)
+    {
+        return;
+    }
 
     /* 确保屏幕自带定时器 tm0 与 tm_sec 关闭并失效，防止屏幕自带粗糙逻辑反向覆盖箭头或倒计时 */
     BSP_Screen_SendRawCmd("tm0.en=0");
@@ -371,21 +378,21 @@ void BSP_Screen_SetBreathArrow(uint8_t phase)
 
     if (phase == 1U)
     {
-        /* 吸气 (Inhale, 0%->100% 充盈) -> 引导吸气显示左箭头 (p1 为左箭头图片 pic=12)，隐藏右箭头 p2 */
-        BSP_Screen_SetVisible("p1", 1U);
-        BSP_Screen_SetVisible("p2", 0U);
+        /* 吸气 -> 显示向左箭头 p1，隐藏向右箭头 p2 */
+        BSP_Screen_SendRawCmd("vis p1,1");
+        BSP_Screen_SendRawCmd("vis p2,0");
     }
     else if (phase == 2U)
     {
-        /* 呼气 (Exhale, 100%->0% 排空) -> 引导呼气显示右箭头 (p2 为右箭头图片 pic=13)，隐藏左箭头 p1 */
-        BSP_Screen_SetVisible("p1", 0U);
-        BSP_Screen_SetVisible("p2", 1U);
+        /* 呼气 -> 隐藏向左箭头 p1，显示向右箭头 p2 */
+        BSP_Screen_SendRawCmd("vis p1,0");
+        BSP_Screen_SendRawCmd("vis p2,1");
     }
     else
     {
-        /* 暂停或停止 -> 箭头全部隐藏 */
-        BSP_Screen_SetVisible("p1", 0U);
-        BSP_Screen_SetVisible("p2", 0U);
+        /* 全部隐藏 */
+        BSP_Screen_SendRawCmd("vis p1,0");
+        BSP_Screen_SendRawCmd("vis p2,0");
     }
 }
 
@@ -519,8 +526,7 @@ void BSP_Screen_SetBleStatus(uint8_t connected)
     /* GBK 编码：开启=\xBF\xAA\xC6\xF4, 关闭=\xB9\xD8\xB1\xD5 */
     const char *status_str = connected ? "\xBF\xAA\xC6\xF4" : "\xB9\xD8\xB1\xD5";
 
-    /* 同步屏幕全局变量 start.bt_en.val，确保设置页与各治疗界面数据一致 */
-    BSP_Screen_SetNum("start.bt_en", "val", connected ? 1 : 0);
+    /* 注意：切勿在此向串口下发 start.bt_en.val 覆写，否则会冲掉屏幕上用户刚刚手动配置的蓝牙开关！ */
 
     if (s_current_screen_page == SCREEN_PAGE_JIANYI)
     {

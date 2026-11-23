@@ -18,8 +18,14 @@
  */
 #define CC_DAC_CCR_MAX          1133U
 
-/* Electrode drop threshold on LM324 output (~120 mV -> ~150 ADC counts) */
-#define ELEC_VALID_ADC_THRESH   150U
+/* Electrode drop threshold on LM324 output:
+ * 悬空开路时 LM324 采样底噪为 0~10 counts (~10mV)
+ * 贴附人体时探测脉冲产生的 LM324 采样为 150~400 counts (~120~320mV)
+ * 取 40 counts 作为脱落/贴附判决门限，灵敏且抗干扰 */
+#define ELEC_VALID_ADC_THRESH   40U
+
+/* 脱落探测占空比（~3.5mA 安全微弱探测脉冲），确保电极重新贴附时能产生明显的 ADC 响应 */
+#define STIM_ELEC_PROBE_CCR     120U
 
 typedef enum {
     HB_STATE_IDLE = 0,
@@ -51,7 +57,8 @@ static StimWaveType_t    s_wave_type = STIM_WAVE_CONT;
 static uint8_t  s_target_level[STIM_CH_COUNT] = {0};
 static float    s_current_level_f[STIM_CH_COUNT] = {0.0f};
 static uint8_t  s_elec_dropped[STIM_CH_COUNT] = {0};
-static uint32_t s_elec_drop_start_ms[STIM_CH_COUNT] = {0};
+static uint32_t s_elec_recover_start_ms[STIM_CH_COUNT] = {0};
+static volatile uint32_t s_last_valid_pulse_ms[STIM_CH_COUNT] = {0};
 static uint16_t s_elec_peak_adc[STIM_CH_COUNT] = {0};
 
 static float    s_boost_integral[STIM_CH_COUNT] = {0.0f};
@@ -107,7 +114,8 @@ void BSP_Stim_Init(void)
         s_target_level[ch] = 0U;
         s_current_level_f[ch] = 0.0f;
         s_elec_dropped[ch] = 0U;
-        s_elec_drop_start_ms[ch] = 0U;
+        s_elec_recover_start_ms[ch] = 0U;
+        s_last_valid_pulse_ms[ch] = 0U;
         s_boost_integral[ch] = 0.0f;
         set_boost_ccr(ch, 0U);
         set_cc_dac_ccr(ch, 0U);
@@ -124,8 +132,19 @@ void BSP_Stim_Init(void)
 
 void BSP_Stim_Enable(uint8_t enable)
 {
+    uint8_t ch;
     s_enabled = enable ? 1U : 0U;
-    if (!s_enabled)
+    if (s_enabled)
+    {
+        uint32_t now = HAL_GetTick();
+        for (ch = 0U; ch < STIM_CH_COUNT; ch++)
+        {
+            s_elec_dropped[ch] = 0U;
+            s_elec_recover_start_ms[ch] = 0U;
+            s_last_valid_pulse_ms[ch] = now;
+        }
+    }
+    else
     {
         BSP_Stim_EmergencyStop();
     }
@@ -155,7 +174,8 @@ void BSP_Stim_SetChannelLevel(uint8_t ch, uint8_t level)
     {
         s_current_level_f[ch] = 0.0f;
         s_elec_dropped[ch] = 0U;
-        s_elec_drop_start_ms[ch] = 0U;
+        s_elec_recover_start_ms[ch] = 0U;
+        s_last_valid_pulse_ms[ch] = HAL_GetTick();
         set_cc_dac_ccr(ch, 0U);
         set_boost_ccr(ch, 0U);
     }
@@ -269,62 +289,94 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
         {
             s_current_level_f[ch] = 0.0f;
             s_boost_integral[ch] = 0.0f;
+            s_elec_dropped[ch] = 0U;
+            s_elec_recover_start_ms[ch] = 0U;
+            s_last_valid_pulse_ms[ch] = now_ms;
             set_boost_ccr(ch, 0U);
             set_cc_dac_ccr(ch, 0U);
             continue;
         }
 
-        /* Electrode drop detection with 5000 ms debounce */
-        if (s_gate_on)
+        /* Electrode drop & recovery detection based on pulse validity */
+        if (s_enabled && s_gate_on)
         {
-            if (s_elec_peak_adc[ch] < ELEC_VALID_ADC_THRESH)
+            uint32_t last_valid = s_last_valid_pulse_ms[ch];
+            uint32_t elapsed_no_pulse = (now_ms >= last_valid) ? (now_ms - last_valid) : 0U;
+
+            if (!s_elec_dropped[ch])
             {
-                if (s_elec_drop_start_ms[ch] == 0U)
-                {
-                    s_elec_drop_start_ms[ch] = now_ms;
-                }
-                else if ((now_ms - s_elec_drop_start_ms[ch]) >= STIM_ELEC_DROP_DEBOUNCE_MS)
+                /* 正常刺激中：超过防抖时间未检测到有效脉冲电流，判定电极脱落 */
+                if (elapsed_no_pulse >= STIM_ELEC_DROP_DEBOUNCE_MS)
                 {
                     s_elec_dropped[ch] = 1U;
+                    s_elec_recover_start_ms[ch] = 0U;
+                    s_current_level_f[ch] = 0.0f;
                 }
             }
             else
             {
-                s_elec_drop_start_ms[ch] = 0U;
-                if (s_elec_dropped[ch])
+                /* 脱落探测期：安全微弱探测脉冲在电极重新贴附后会重新产生有效采样 (elapsed_no_pulse < 300ms) */
+                if (elapsed_no_pulse < 300U)
                 {
-                    s_elec_dropped[ch] = 0U;
-                    s_current_level_f[ch] = 0.0f; /* Soft-start ramp on recovery */
+                    if (s_elec_recover_start_ms[ch] == 0U)
+                    {
+                        s_elec_recover_start_ms[ch] = now_ms;
+                    }
+                    else if ((now_ms - s_elec_recover_start_ms[ch]) >= STIM_ELEC_RECOVER_CONFIRM_MS)
+                    {
+                        s_elec_dropped[ch] = 0U;
+                        s_elec_recover_start_ms[ch] = 0U;
+                        s_current_level_f[ch] = 0.0f; /* 恢复时触发软启动平滑爬升 */
+                    }
+                }
+                else
+                {
+                    /* 探测脉冲未能检测到持续接触，重置恢复确认计时 */
+                    s_elec_recover_start_ms[ch] = 0U;
                 }
             }
         }
         s_elec_peak_adc[ch] = 0U;
 
-        if (s_elec_dropped[ch])
+        /* 关键修复（问题5）：掉一个片三个全停！若任一已启用通道脱落，所有通道切断常规刺激 */
         {
-            s_current_level_f[ch] = 0.0f;
-            /* 脱落时恒流 DAC 保持微弱探测占空比（~1mA安全探针），保证电极重新贴附时能够被采样识别 */
-            set_cc_dac_ccr(ch, 30U);
-        }
-        else
-        {
-            /* Soft-start ramp over STIM_ELEC_RECOVER_RAMP_MS (10ms step) */
-            float target_f = (float)s_target_level[ch];
-            float step = target_f * (10.0f / (float)STIM_ELEC_RECOVER_RAMP_MS);
-            if (step < 0.02f) step = 0.02f;
-            if (s_current_level_f[ch] < target_f)
+            uint8_t any_dropped = 0U;
+            uint8_t k;
+            for (k = 0U; k < STIM_CH_COUNT; k++)
             {
-                s_current_level_f[ch] += step;
-                if (s_current_level_f[ch] > target_f) s_current_level_f[ch] = target_f;
+                if (s_target_level[k] > 0U && s_elec_dropped[k])
+                {
+                    any_dropped = 1U;
+                    break;
+                }
+            }
+
+            if (any_dropped)
+            {
+                s_current_level_f[ch] = 0.0f;
+                /* 脱落时恒流 DAC 保持微弱探测占空比（~3.5mA安全探针），保证电极重新贴附时能够被采样识别 */
+                set_cc_dac_ccr(ch, STIM_ELEC_PROBE_CCR);
             }
             else
             {
-                s_current_level_f[ch] = target_f;
-            }
+                /* Soft-start ramp over STIM_ELEC_RECOVER_RAMP_MS (10ms step) */
+                float target_f = (float)s_target_level[ch];
+                float step = target_f * (10.0f / (float)STIM_ELEC_RECOVER_RAMP_MS);
+                if (step < 0.02f) step = 0.02f;
+                if (s_current_level_f[ch] < target_f)
+                {
+                    s_current_level_f[ch] += step;
+                    if (s_current_level_f[ch] > target_f) s_current_level_f[ch] = target_f;
+                }
+                else
+                {
+                    s_current_level_f[ch] = target_f;
+                }
 
-            /* Update Constant-Current DAC PWM */
-            uint32_t dac_ccr = (uint32_t)((s_current_level_f[ch] / (float)STIM_LEVEL_MAX) * (float)CC_DAC_CCR_MAX);
-            set_cc_dac_ccr(ch, dac_ccr);
+                /* Update Constant-Current DAC PWM */
+                uint32_t dac_ccr = (uint32_t)((s_current_level_f[ch] / (float)STIM_LEVEL_MAX) * (float)CC_DAC_CCR_MAX);
+                set_cc_dac_ccr(ch, dac_ccr);
+            }
         }
 
         /* Closed-loop PI Boost regulator: 根据设定目标档位稳定升压 (7.5V ~ 30V)
@@ -369,6 +421,10 @@ void BSP_Stim_PulseTickISR(void)
         {
             raw = ADC1_GetChannelRaw((AdcChannelIndex_t)(ADC_IDX_ELEC1_IN + ch));
             if (raw > s_elec_peak_adc[ch]) s_elec_peak_adc[ch] = raw;
+            if (raw >= ELEC_VALID_ADC_THRESH)
+            {
+                s_last_valid_pulse_ms[ch] = HAL_GetTick();
+            }
         }
     }
 

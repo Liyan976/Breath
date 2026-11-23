@@ -346,17 +346,20 @@ void App_Therapy_Resume(void)
             g_app.lung_pct     = 0U;
             BSP_Screen_SetLungFill(0U);
             BSP_Screen_SetBreathArrow(1U); /* 吸气箭头（向左指示） */
-            BSP_Audio_PlayVoice(AUDIO_VOICE_INHALE);
             apply_combined_phase_to_stim(BREATH_PHASE_INHALE);
         }
 
         if (g_app.Stim_Mode != STIM_MODE_OFF)
         {
             sync_stimulator_params();
+            g_app.elec_drop_mask = 0U;
             BSP_Stim_SetComboOverride((g_app.Breath_Mode != BREATH_MODE_OFF) ? 1U : 0U,
                                       1U, g_app.stim_freq_hz ? g_app.stim_freq_hz : 1U);
             BSP_Stim_Enable(1U);
         }
+
+        /* 关键修复：纯电刺激模式、联合模式及呼吸模式暂停恢复时，统一播报“开始治疗”语音 */
+        BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
 
         /* 立即同步刷新当前保留的剩余倒计时和频率 */
         uint32_t total_s = (uint32_t)g_app.timer_min * 60U;
@@ -531,6 +534,7 @@ void App_Therapy_StartPureStim(uint8_t mode_sel, uint8_t freq_hz, uint8_t ch1, u
 
     s_paused_therapy_page   = SCREEN_PAGE_ELEC;
     g_app.active_elapsed_ms = 0U;
+    g_app.elec_drop_mask    = 0U;
     g_app.running = 1U;
     g_app.paused  = 0U;
     g_app.sys_state = APP_STATE_RUNNING;
@@ -575,6 +579,7 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
 
     s_paused_therapy_page   = (breath_mode == 1U) ? SCREEN_PAGE_FANKUIELEC : SCREEN_PAGE_JIANYIELEC;
     g_app.active_elapsed_ms = 0U;
+    g_app.elec_drop_mask    = 0U;
     g_app.running = 1U;
     g_app.paused  = 0U;
     g_app.sys_state = APP_STATE_RUNNING;
@@ -625,7 +630,9 @@ void App_Therapy_StopToMenu(void)
     g_app.sys_state   = APP_STATE_MENU;
 
     Algo_Breath_StopGuide();
-    App_Therapy_ResetBioCalibrationSession();
+    /* 注意：切勿在此处清除 s_bio_freq_valid！
+     * 进入设置界面会调用 StopToMenu 停止治疗计时，但必须保留已采集好的生物反馈呼吸频率！
+     * 只有真正退出到主菜单或重新选择模式时，才由外部显式调用 App_Therapy_ResetBioCalibrationSession() */
     BSP_Stim_SetComboOverride(0U, 0U, 1U);
     BSP_Stim_Enable(0U);
     /* 关键修复（问题7）：退出到菜单无条件终止所有正在播放或排队的音频，杜绝提示音泄漏到菜单 */
@@ -673,15 +680,19 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
         {
             if (s_bio_calib_stage == 0U)
             {
-                /* 阶段0：等待 0007 播报完毕（约 4.5 秒）。以播放芯片空闲或 5.5 秒安全超时为准 */
-                if (((now_ms - s_bio_calib_tick) >= 4500U && !BSP_Audio_IsBusy()) ||
-                    ((now_ms - s_bio_calib_tick) >= 5500U))
+                /* 阶段0：等待 0007 播报完毕（实际时长 4.8 秒）。
+                 * 必须完整等待至少 4800ms，确保 0007 完整播报完毕，
+                 * 严禁在 1.5s 提前因 BUSY 引脚抖动跳出，杜绝“请佩戴...”被掐断成“吸、呼...” */
+                if ((now_ms - s_bio_calib_tick) >= 4800U)
                 {
-                    s_bio_calib_stage  = 1U;
-                    s_bio_guide_cycles = 0U;
-                    s_bio_calib_tick   = now_ms;
-                    /* 启动以 10 次/分 (6秒周期，4:6吸呼比) 的 3 次主动呼吸引导 */
-                    Algo_Breath_StartGuide(10U);
+                    if (!BSP_Audio_IsBusy() || (now_ms - s_bio_calib_tick) >= 7000U)
+                    {
+                        s_bio_calib_stage  = 1U;
+                        s_bio_guide_cycles = 0U;
+                        s_bio_calib_tick   = now_ms;
+                        /* 启动以 10 次/分 (6秒周期，4:6吸呼比) 的 3 次主动呼吸引导 */
+                        Algo_Breath_StartGuide(10U);
+                    }
                 }
             }
             else if (s_bio_calib_stage == 1U)
@@ -837,21 +848,35 @@ void App_Therapy_MainTick10ms(uint32_t now_ms)
         {
             for (ch = 0U; ch < STIM_CH_COUNT; ch++)
             {
-                if (BSP_Stim_IsElectrodeDropped(ch))
+                /* 关键修复（问题5）：仅对已启用档位（>0）的通道进行脱落检测！
+                 * 若通道 2/3 档位为 0 未开启，悬空绝不误报脱落，通道 1 可独立正常工作 */
+                if (g_app.stim_level[ch] > 0U && BSP_Stim_IsElectrodeDropped(ch))
                 {
                     drop_mask |= (uint8_t)(1U << ch);
                 }
             }
+
             if (drop_mask != g_app.elec_drop_mask)
             {
                 for (ch = 0U; ch < STIM_CH_COUNT; ch++)
                 {
                     BSP_Screen_SetElectrodeWarn(ch, (drop_mask >> ch) & 0x01U);
                 }
-                if (drop_mask != 0U && g_app.elec_drop_mask == 0U)
+
+                if (drop_mask != 0U)
                 {
-                    BSP_Audio_PlayVoice(AUDIO_VOICE_ELECTRODE_LOST);
+                    /* 电极脱落：音库中无脱落语音故不播报语音；按键保持运行状态不来回切换；
+                     * 治疗有效计时由 Tick20ms 中的 elec_drop_mask 自动挂起暂停 */
                 }
+                else
+                {
+                    /* 关键修复：脱落电极重新贴附并确认恢复后，自动播报“开始治疗”语音 */
+                    if (g_app.elec_drop_mask != 0U)
+                    {
+                        BSP_Audio_PlayVoice(AUDIO_VOICE_START_TREAT);
+                    }
+                }
+
                 g_app.elec_drop_mask = drop_mask;
             }
         }

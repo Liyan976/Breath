@@ -14,8 +14,9 @@ extern "C" {
 #define STIM_PEAK_CURRENT_MAX_MA    30.0f
 #define STIM_BOOST_MAX_MV           30000U
 #define STIM_BOOST_MIN_MV           5000U
-#define STIM_ELEC_DROP_DEBOUNCE_MS  600U  /* 关键修复（问题6）：由5000ms缩短为600ms，电极脱落后0.6秒内灵敏识别并停疗告警 */
-#define STIM_ELEC_RECOVER_RAMP_MS   3000U
+#define STIM_ELEC_DROP_DEBOUNCE_MS      1000U  /* 脱落判定防抖：1.0秒无电流即判定脱落 */
+#define STIM_ELEC_RECOVER_CONFIRM_MS   1000U  /* 重新贴附确认时间：1.0秒稳定接触即确认恢复并播报开始治疗 */
+#define STIM_ELEC_RECOVER_RAMP_MS      2500U  /* 恢复软启动平滑爬升时长：2.5秒 */
 
 typedef enum {
     STIM_WAVE_CONT = 0,          /* Continuous wave */

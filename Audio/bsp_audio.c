@@ -576,12 +576,21 @@ void BSP_Audio_Poll(void)
     }
 }
 
+static uint8_t s_current_hw_vol = 0xFFU;
+
 void BSP_Audio_SetVolume(uint8_t ui_vol_0_to_10)
 {
     uint8_t hw_vol;
 
     if (ui_vol_0_to_10 > AUDIO_VOL_UI_MAX) ui_vol_0_to_10 = AUDIO_VOL_UI_MAX;
     hw_vol = (uint8_t)((uint16_t)ui_vol_0_to_10 * AUDIO_VOL_HW_MAX / AUDIO_VOL_UI_MAX);
+
+    /* 关键修复（问题1）：音量未变时绝不下发，严防冗余音量指令掐断正在播放的语音 */
+    if (hw_vol == s_current_hw_vol)
+    {
+        return;
+    }
+    s_current_hw_vol = hw_vol;
 
     audio_req_replace_or_push(AOP_VOL, hw_vol);   /* 音量只保留最新一条，不占队、不滞后 */
 }

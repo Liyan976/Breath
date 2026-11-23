@@ -42,11 +42,22 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             break;
 
         case SCREEN_PAGE_ELECMODE:    /* Page 1:  elecmode (电刺激模式选择：连续/断续/疏密) */
+            if (action == 0x08U)
+            {
+                App_Therapy_StopToMenu();
+                App_Therapy_ResetBioCalibrationSession();
+                /* 关键修复（问题6）：确保电刺激模式选择页所有波形按钮可见，绝不丢图 */
+                BSP_Screen_SendRawCmd("vis p0,1;vis p1,1;vis p2,1;vis p3,1;vis p4,1;vis p5,1");
+                BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_STIM_MODE); /* 0011: 请选择电刺激模式 */
+            }
+            break;
+
         case SCREEN_PAGE_LIANHEMODE2: /* Page 10: lianhemode2 (联合模式第2步：选电刺激) */
             if (action == 0x08U)
             {
                 App_Therapy_StopToMenu();
                 App_Therapy_ResetBioCalibrationSession();
+                BSP_Screen_SendRawCmd("vis p0,1;vis p1,1;vis p2,1;vis p3,1;vis p4,1;vis p5,1");
                 BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_STIM_MODE); /* 0011: 请选择电刺激模式 */
             }
             break;
@@ -56,6 +67,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 App_Therapy_StopToMenu();
                 App_Therapy_ResetBioCalibrationSession();
+                /* 关键修复（问题4）：确保呼吸引导模式选择页简易/反馈按钮全部可见，绝不丢图 */
+                BSP_Screen_SendRawCmd("vis p0,1;vis p1,1;vis p2,1;vis p3,1");
                 BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_BREATH_MODE); /* 0002: 请选择呼吸引导模式 */
             }
             break;
@@ -65,6 +78,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 App_Therapy_StopToMenu();
                 App_Therapy_ResetBioCalibrationSession();
+                BSP_Screen_SendRawCmd("vis p0,1;vis p1,1;vis p2,1;vis p3,1");
                 BSP_Audio_PlayVoice(AUDIO_VOICE_SEL_BREATH_MODE); /* 0002: 请选择呼吸引导模式 */
             }
             break;
@@ -75,10 +89,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 /* 禁用屏幕内部定时器 tm0，防止屏幕自带粗糙逻辑反向翻转呼吸箭头 */
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                /* 关键修复（问题5）：立即更新蓝牙文字状态与下位机严格一致 */
-                BSP_Screen_SetBleStatus(g_app.ble_enabled);
-                /* 同步查询屏幕内部保存的音量档位与蓝牙开关状态 */
-                BSP_Screen_QueryVolume();
+                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
+                BSP_Screen_QueryBleEnable();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -149,8 +161,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 /* 禁用屏幕内部定时器 tm0，防止屏幕自带的粗糙呼吸逻辑与下位机算法冲突闪烁 */
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SetBleStatus(g_app.ble_enabled);
-                BSP_Screen_QueryVolume();
+                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
+                BSP_Screen_QueryBleEnable();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -224,8 +236,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SetBleStatus(g_app.ble_enabled);
-                BSP_Screen_QueryVolume();
+                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
+                BSP_Screen_QueryBleEnable();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -322,8 +334,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 /* 禁用屏幕内部定时器 tm0，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SetBleStatus(g_app.ble_enabled);
-                BSP_Screen_QueryVolume();
+                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
+                BSP_Screen_QueryBleEnable();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -426,8 +438,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             if (action == 0x08U)
             {
                 BSP_Screen_SendRawCmd("tm0.en=0");
-                BSP_Screen_SetBleStatus(g_app.ble_enabled);
-                BSP_Screen_QueryVolume();
+                /* 关键修复（问题2）：查询屏幕最新全局变量 start.bt_en.val，同步蓝牙开关与硬件广播状态 */
+                BSP_Screen_QueryBleEnable();
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
                 {
@@ -498,7 +510,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_StopToMenu();
                 App_Therapy_ClearPausedSession();
                 App_Therapy_ResetBioCalibrationSession();
-                BSP_Screen_QueryVolume();
+                BSP_Screen_QueryBleEnable();
                 BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
             }
             else if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
@@ -525,7 +537,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_StopToMenu();
                 App_Therapy_ClearPausedSession();
                 /* 关键保留机制：生物反馈设置界面进入时不清除 s_bio_freq_valid，以便返回时保留呼吸频率 */
-                BSP_Screen_QueryVolume();
+                BSP_Screen_QueryBleEnable();
                 BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
             }
             else if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
@@ -634,14 +646,13 @@ void ScreenTask(void const *argument)
                     uint8_t vol = (num_val > 10U) ? 10U : (uint8_t)num_val;
                     App_Therapy_SetVolume(vol);
                     BSP_Screen_ClearPendingQuery();
-                    /* 级联查询蓝牙开关状态 */
-                    BSP_Screen_QueryBleEnable();
                 }
                 else if (query == SCREEN_QUERY_BT_EN)
                 {
                     uint8_t ble_en = (num_val != 0U) ? 1U : 0U;
                     App_Therapy_SetBleEnable(ble_en);
                     BSP_Screen_ClearPendingQuery();
+                    BSP_Screen_QueryVolume();
                 }
                 else
                 {
