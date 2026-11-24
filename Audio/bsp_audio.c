@@ -31,7 +31,7 @@
 #include <string.h>
 
 /* ======================= 可调参数 ======================= */
-#define AUDIO_POWER_ON_WAIT_MS   1000U  /* N9300 上电初始化静默期缩短至 1s，快速响应开机欢迎语 */
+#define AUDIO_POWER_ON_WAIT_MS   1200U  /* N9300 上电初始化静默期优化为 1.2s，确保 SPI-Flash FAT 挂载稳定 */
 #define AUDIO_CMD_GAP_MS           50U  /* 两条指令最小间隔（优化为 50ms，彻底消除页面切换切歌延迟） */
 #define AUDIO_SEG_MIN_MS          300U  /* 播放指令后至少多久才允许判定“播完” */
 #define AUDIO_SEG_TIMEOUT_MS    30000U  /* 单段语音超时兜底（加大至 30s，支持 0007 长语音） */
@@ -461,19 +461,25 @@ void BSP_Audio_Poll(void)
         audio_rx_parse(b);
     }
 
-    /* 2. 上电 1s 静默期：期间只收不发 */
+    /* 2. 上电静默期：期间只收不发 */
     if (!s_ready)
     {
         if ((now - s_power_on_tick) >= AUDIO_POWER_ON_WAIT_MS)
         {
             s_ready        = 1U;
-            /* 1秒上电初始化门闸到期，直接下发切到 SPI-FLASH 盘符，绝不能压入队列尾部！ */
+            /* 1.2秒上电初始化门闸到期，直接下发切到 SPI-FLASH 盘符 */
             n930x_switch_flash();
+            /* 关键时序：切盘符指令发出后，强制后续指令等待至少 250ms，留足 N9300 建立 FAT 句柄时间 */
+            s_last_tx_tick = now + 250U;
             /* 关键修复（问题3）：就绪后立即将初始音量压入指令队列，确保 N9300 硬件音量生效（默认5档），
              * 彻底消除芯片默认 30(满音量10档) 的硬件硬伤 */
             uint8_t init_vol = (s_current_hw_vol != 0xFFU) ? s_current_hw_vol : 15U;
             audio_req_push(AOP_VOL, (uint16_t)init_vol);
-            s_last_tx_tick = now;
+            /* 关键修复：开机欢迎语保底入队，确保上电就绪后必定顺畅播放欢迎语音 */
+            if (!audio_req_has(AOP_PLAY))
+            {
+                audio_req_push(AOP_PLAY, (uint16_t)AUDIO_VOICE_WELCOME);
+            }
         }
         return;
     }
@@ -736,6 +742,7 @@ void BSP_Audio_Stop(void)
     s_seg_active    = 0U;
     s_seg_busy_seen = 0U;
     s_halt_pending  = 0U;
+    s_last_play_req_track = 0U; /* 关键：重置最近播放记录，允许 Stop 后重新请求同一曲目，防止防抖误杀 */
     /* 关键修复（问题3）：保留 s_pending_deferred_hw_vol，停止播放后空闲时自动补发音量，
      * 绝不清空待发生效的音量指令！ */
     n930x_stop();

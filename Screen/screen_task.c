@@ -33,11 +33,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 App_Therapy_StopToMenu();
                 App_Therapy_ResetBioCalibrationSession();
-                /* 若开机欢迎语尚未播放且芯片不忙，才发起播放，已在播放中则完整播放不打断 */
-                if (!BSP_Audio_IsBusy())
-                {
-                    BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME); /* 0001: 欢迎使用呼吸调控仪... */
-                }
+                /* 进入开机主菜单页面，发起播放开机欢迎语（若正在播放则底层自动维持不打断） */
+                BSP_Audio_PlayVoice(AUDIO_VOICE_WELCOME); /* 0001: 欢迎使用呼吸调控仪... */
             }
             break;
 
