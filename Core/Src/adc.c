@@ -126,7 +126,14 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef *adcHandle)
 uint16_t ADC1_GetChannelRaw(AdcChannelIndex_t idx)
 {
   if ((uint32_t)idx >= ADC1_CHANNEL_COUNT) return 0U;
-  return s_adc_dma_buf[ADC_DMA_DEPTH - 1U][idx];
+  uint32_t total = ADC_DMA_DEPTH * ADC1_CHANNEL_COUNT;
+  uint32_t ndtr = hdma_adc1.Instance ? hdma_adc1.Instance->NDTR : 0U;
+  uint32_t transferred = (total > ndtr) ? (total - ndtr) : 0U;
+  uint32_t curr_row = (transferred / ADC1_CHANNEL_COUNT) % ADC_DMA_DEPTH;
+  uint32_t last_row = (curr_row > 0U) ? (curr_row - 1U) : (ADC_DMA_DEPTH - 1U);
+  uint16_t v1 = s_adc_dma_buf[curr_row][idx];
+  uint16_t v2 = s_adc_dma_buf[last_row][idx];
+  return (v1 > v2) ? v1 : v2;
 }
 
 uint16_t ADC1_GetChannelAvg(AdcChannelIndex_t idx)

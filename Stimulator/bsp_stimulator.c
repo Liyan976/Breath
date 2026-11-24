@@ -21,8 +21,8 @@
 /* Electrode drop threshold on LM324 output:
  * 悬空开路时 LM324 采样底噪为 0~10 counts (~10mV)
  * 贴附人体时探测脉冲产生的 LM324 采样为 150~400 counts (~120~320mV)
- * 取 40 counts 作为脱落/贴附判决门限，灵敏且抗干扰 */
-#define ELEC_VALID_ADC_THRESH   40U
+ * 取 20 counts 作为脱落/贴附判决门限，既高于0~10底噪，又保证1档微弱电流稳定识别 */
+#define ELEC_VALID_ADC_THRESH   20U
 
 /* 脱落探测占空比（~3.5mA 安全微弱探测脉冲），确保电极重新贴附时能产生明显的 ADC 响应 */
 #define STIM_ELEC_PROBE_CCR     120U
@@ -137,6 +137,8 @@ void BSP_Stim_Enable(uint8_t enable)
     if (s_enabled)
     {
         uint32_t now = HAL_GetTick();
+        s_hb_state = HB_STATE_IDLE;
+        s_cycle_tick_acc = s_period_ticks; /* 启动即刻激发首拍脉冲，消除1Hz下首脉冲1秒迟滞 */
         for (ch = 0U; ch < STIM_CH_COUNT; ch++)
         {
             s_elec_dropped[ch] = 0U;
@@ -208,6 +210,18 @@ void BSP_Stim_SetRuntimeFreqHz(uint8_t freq_hz)
     uint32_t period;
     if (freq_hz < STIM_FREQ_MIN_HZ) freq_hz = STIM_FREQ_MIN_HZ;
     if (freq_hz > STIM_FREQ_MAX_HZ) freq_hz = STIM_FREQ_MAX_HZ;
+    if (freq_hz != s_runtime_freq_hz)
+    {
+        uint8_t c;
+        uint32_t now = HAL_GetTick();
+        for (c = 0U; c < STIM_CH_COUNT; c++)
+        {
+            if (!s_elec_dropped[c])
+            {
+                s_last_valid_pulse_ms[c] = now;
+            }
+        }
+    }
     s_runtime_freq_hz = freq_hz;
     period = TICK_RATE_HZ / (uint32_t)freq_hz;
     if (period < (PULSE_WIDTH_TICKS * 2U + PULSE_DEADTIME_TICKS + 4U))
@@ -329,16 +343,29 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
             continue;
         }
 
+        /* 捕获到的峰值若满足有效脉冲门限，即刻刷新有效脉冲时间戳（双重保障） */
+        if (s_elec_peak_adc[ch] >= ELEC_VALID_ADC_THRESH)
+        {
+            s_last_valid_pulse_ms[ch] = now_ms;
+        }
+
         /* Electrode drop & recovery detection based on pulse validity */
         if (s_enabled && s_gate_on)
         {
             uint32_t last_valid = s_last_valid_pulse_ms[ch];
             uint32_t elapsed_no_pulse = (now_ms >= last_valid) ? (now_ms - last_valid) : 0U;
 
+            /* 根据当前运行时频率动态自适应脱落判定门限与恢复探测窗口（消除1Hz时周期为1000ms引发的误判） */
+            uint32_t active_hz = (s_runtime_freq_hz > 0U) ? (uint32_t)s_runtime_freq_hz : 1U;
+            uint32_t pulse_gap_ms = 1000U / active_hz;
+            uint32_t drop_timeout_ms = pulse_gap_ms * 2U + 300U;
+            if (drop_timeout_ms < 1500U) drop_timeout_ms = 1500U;
+            uint32_t recover_gap_ms = pulse_gap_ms + 300U;
+
             if (!s_elec_dropped[ch])
             {
-                /* 正常刺激中：超过防抖时间未检测到有效脉冲电流，判定电极脱落 */
-                if (elapsed_no_pulse >= STIM_ELEC_DROP_DEBOUNCE_MS)
+                /* 正常刺激中：超过防抖时间未检测到有效脉冲电流，判定电极脱落（容许至少2个脉冲周期无信号） */
+                if (elapsed_no_pulse >= drop_timeout_ms)
                 {
                     s_elec_dropped[ch] = 1U;
                     s_elec_recover_start_ms[ch] = 0U;
@@ -347,8 +374,8 @@ void BSP_Stim_UpdateLoop10ms(uint32_t now_ms)
             }
             else
             {
-                /* 脱落探测期：安全微弱探测脉冲在电极重新贴附后会重新产生有效采样 (elapsed_no_pulse < 300ms) */
-                if (elapsed_no_pulse < 300U)
+                /* 脱落探测期：安全微弱探测脉冲在电极重新贴附后会重新产生有效采样 */
+                if (elapsed_no_pulse < recover_gap_ms)
                 {
                     if (s_elec_recover_start_ms[ch] == 0U)
                     {
