@@ -23,7 +23,30 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
     uint8_t page   = frame->page;       /* raw[1]: 页面号 (0~14，ScreenPageId_t) */
     uint8_t action = frame->control;    /* raw[2]: 动作码 (0x01启动, 0x00暂停, 0x02返回, 0x08页面就绪, 0x10音量, 0x11蓝牙) */
 
-    BSP_Screen_SetCurrentPage(page);
+    /* 关键保护：全局参数设置帧(0x10音量, 0x11蓝牙, 0x12定时)仅更新参数，
+     * 绝不篡改当前活跃页面编号！否则查询全局变量回传的 0x00 会将活跃页面错误置为 0(start)，
+     * 进而导致后续 BSP_Screen_SetBreathArrow() 等治疗页面的呼吸箭头与动画被全盘拦截失效！ */
+    if (action == 0x10U && frame->len >= 4U)
+    {
+        App_Therapy_SetVolume(frame->raw[3]);
+        return;
+    }
+    if (action == 0x11U && frame->len >= 4U)
+    {
+        App_Therapy_SetBleEnable(frame->raw[3]);
+        return;
+    }
+    if (action == 0x12U && frame->len >= 4U)
+    {
+        App_Therapy_SetTimerMin(frame->raw[3]);
+        return;
+    }
+
+    /* 仅当收到真正的页面级事件（0x08页面就绪, 0x01启动, 0x00暂停, 0x02返回）时，才同步更新活跃页面编号 */
+    if (action == 0x08U || action == 0x01U || action == 0x00U || action == 0x02U || action == 0x0FU)
+    {
+        BSP_Screen_SetCurrentPage(page);
+    }
 
     switch (page)
     {
@@ -84,10 +107,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYI: /* Page 4: jianyi (单纯简易呼吸引导测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
-                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
-                BSP_Screen_SyncGlobalSettings();
-
-                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞反向翻转箭头 */
+                /* 禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞反向翻转箭头 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
@@ -157,10 +177,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYIELEC: /* Page 6: jianyielec (简易呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
-                BSP_Screen_SyncGlobalSettings();
-
-                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞 */
+                /* 禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
@@ -234,10 +251,10 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUI: /* Page 7: fankui (单纯生物反馈呼吸测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
-                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
-                BSP_Screen_SyncGlobalSettings();
+                /* 终止菜单级残留语音，确保 0007 生物反馈呼吸引导语音从头完整播报 */
+                BSP_Audio_Stop();
 
-                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
+                /* 禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
@@ -333,10 +350,10 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUIELEC: /* Page 9: fankuielec (生物反馈呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
-                BSP_Screen_SyncGlobalSettings();
+                /* 终止菜单级残留语音，确保 0007 生物反馈呼吸引导语音从头完整播报 */
+                BSP_Audio_Stop();
 
-                /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
+                /* 禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
@@ -439,8 +456,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_ELEC: /* Page 11: elec (单纯电刺激治疗测量运行) */
             if (action == 0x08U)
             {
-                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
-                BSP_Screen_SyncGlobalSettings();
+                /* 终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
+                BSP_Audio_Stop();
 
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
