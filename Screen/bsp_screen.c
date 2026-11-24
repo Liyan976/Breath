@@ -664,16 +664,24 @@ void BSP_Screen_ShowFinished(uint16_t valid_min)
 
 static volatile ScreenQueryState_t s_pending_query = SCREEN_QUERY_NONE;
 
+/**
+ * @brief  向屏幕发送复合指令，利用 prints 将 start.bt_en.val、start.set_vol.val、start.set_time.val
+ *         以标准控制帧 0x05 0x00 0x11/0x10/0x12 形式回传给 MCU，跨页面读取绝不报 0x1A 错误！
+ */
+void BSP_Screen_SyncGlobalSettings(void)
+{
+    /* 一次性批量发送蓝牙、音量与定时查询，屏幕原样回传 0x05 0x00 <action> <val> 0xFF 0xFF 0xFF */
+    BSP_Screen_SendRawCmd("printh 05 00 11;prints start.bt_en.val,1;printh FF FF FF;printh 05 00 10;prints start.set_vol.val,1;printh FF FF FF;printh 05 00 12;prints start.set_time.val,1;printh FF FF FF");
+}
+
 void BSP_Screen_QueryVolume(void)
 {
-    s_pending_query = SCREEN_QUERY_SET_VOL;
-    BSP_Screen_SendRawCmd("get start.set_vol.val");
+    BSP_Screen_SendRawCmd("printh 05 00 10;prints start.set_vol.val,1;printh FF FF FF");
 }
 
 void BSP_Screen_QueryBleEnable(void)
 {
-    s_pending_query = SCREEN_QUERY_BT_EN;
-    BSP_Screen_SendRawCmd("get start.bt_en.val");
+    BSP_Screen_SendRawCmd("printh 05 00 11;prints start.bt_en.val,1;printh FF FF FF");
 }
 
 ScreenQueryState_t BSP_Screen_GetPendingQuery(void)

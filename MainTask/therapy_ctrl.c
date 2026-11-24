@@ -15,6 +15,7 @@ static uint8_t  s_bio_freq_valid   = 0U; /**< 生物反馈呼吸频率是否已�
 static uint8_t  s_bio_mode_owner   = 0U; /**< 采集该频率所属的具体页面 */
 static uint8_t  s_bio_calib_stage  = 0U; /**< 0: 播报0007等待, 1: 3次吸呼主动引导与采样, 2: 播报结果/完成 */
 static uint8_t  s_bio_guide_cycles = 0U; /**< 引导完整呼吸循环计数 (吸+呼为1次) */
+static uint8_t  s_suppress_initial_inhale_voice = 0U; /**< 关键修复（问题2）：首个吸气相位抑制“吸”，消除与“开始治疗”竞态 */
 
 void App_Therapy_StartBioCalib(uint8_t page)
 {
@@ -340,6 +341,7 @@ void App_Therapy_Resume(void)
 
         if (g_app.Breath_Mode != BREATH_MODE_OFF)
         {
+            s_suppress_initial_inhale_voice = 1U;
             /* 继续时重新从吸气阶段 0% 开始引导 */
             Algo_Breath_StartGuide(g_app.guide_bpm);
             g_app.breath_phase = BREATH_PHASE_INHALE;
@@ -396,6 +398,7 @@ void App_Therapy_StartOrPause(void)
 
     if (g_app.Breath_Mode != BREATH_MODE_OFF)
     {
+        s_suppress_initial_inhale_voice = 1U;
         g_app.guide_bpm = (g_app.Breath_Mode == BREATH_MODE_BIOFEEDBACK)
                           ? Algo_Breath_GetBioGBPM()
                           : 10U;
@@ -445,6 +448,7 @@ void App_Therapy_StartSimpleBreath(uint8_t timer_min, uint8_t volume, uint8_t bl
     g_app.paused  = 0U;
     g_app.sys_state = APP_STATE_RUNNING;
 
+    s_suppress_initial_inhale_voice = 1U;
     Algo_Breath_StartGuide(g_app.guide_bpm);
     g_app.breath_phase = BREATH_PHASE_INHALE;
     g_app.lung_pct     = 0U;
@@ -492,6 +496,7 @@ void App_Therapy_StartBiofeedbackBreath(uint8_t timer_min, uint8_t volume, uint8
     g_app.paused  = 0U;
     g_app.sys_state = APP_STATE_RUNNING;
 
+    s_suppress_initial_inhale_voice = 1U;
     Algo_Breath_StartGuide(g_app.guide_bpm);
     g_app.breath_phase = BREATH_PHASE_INHALE;
     g_app.lung_pct     = 0U;
@@ -599,6 +604,7 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
     {
         g_app.guide_bpm = 10U;
     }
+    s_suppress_initial_inhale_voice = 1U;
     Algo_Breath_StartGuide(g_app.guide_bpm);
     g_app.breath_phase = BREATH_PHASE_INHALE;
     g_app.lung_pct     = 0U;
@@ -621,6 +627,7 @@ void App_Therapy_StartCombo(uint8_t breath_mode, uint8_t mode_sel, uint8_t freq_
 void App_Therapy_StopToMenu(void)
 {
     /* 彻底重置治疗运行状态与暂停保存数据，确保退出到菜单后重新进入时从初始设定重新开始 */
+    s_suppress_initial_inhale_voice = 0U;
     g_app.running = 0U;
     g_app.paused  = 0U;
     g_app.active_elapsed_ms = 0U;
@@ -792,9 +799,19 @@ void App_Therapy_UnifiedTimeAxisStep20ms(uint32_t now_ms)
             /* Unified lockstep sync across Screen, Audio, and Stimulator */
             BSP_Screen_SetBreathArrow((uint8_t)guide_out.phase);
             BSP_Screen_SetGuideBPM(guide_out.guide_bpm);
-            BSP_Audio_PlayVoice((guide_out.phase == BREATH_PHASE_INHALE)
-                                ? AUDIO_VOICE_INHALE
-                                : AUDIO_VOICE_EXHALE);
+            if (s_suppress_initial_inhale_voice && guide_out.phase == BREATH_PHASE_INHALE)
+            {
+                /* 关键修复（问题2）：启动或恢复治疗瞬间已播报“开始治疗”（0005），
+                 * 首个吸气相位抑制“吸”音，彻底消除 0005 与 0003 在 0~20ms 内的指令冲撞与吞音竞态！
+                 * 随后呼气阶段正常播报“呼”，下一个周期恢复正常“吸、呼”循环 */
+                s_suppress_initial_inhale_voice = 0U;
+            }
+            else
+            {
+                BSP_Audio_PlayVoice((guide_out.phase == BREATH_PHASE_INHALE)
+                                    ? AUDIO_VOICE_INHALE
+                                    : AUDIO_VOICE_EXHALE);
+            }
             apply_combined_phase_to_stim(guide_out.phase);
         }
     }

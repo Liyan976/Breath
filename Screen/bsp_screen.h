@@ -106,6 +106,7 @@ typedef enum {
     SCREEN_QUERY_SET_TIME
 } ScreenQueryState_t;
 
+void     BSP_Screen_SyncGlobalSettings(void);
 void     BSP_Screen_QueryVolume(void);
 void     BSP_Screen_QueryBleEnable(void);
 ScreenQueryState_t BSP_Screen_GetPendingQuery(void);

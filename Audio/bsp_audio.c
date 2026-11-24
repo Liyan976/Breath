@@ -31,7 +31,7 @@
 #include <string.h>
 
 /* ======================= 可调参数 ======================= */
-#define AUDIO_POWER_ON_WAIT_MS   5000U  /* N9300 上电初始化静默期，5s 内不发指令 */
+#define AUDIO_POWER_ON_WAIT_MS   1000U  /* N9300 上电初始化静默期缩短至 1s，快速响应开机欢迎语 */
 #define AUDIO_CMD_GAP_MS           50U  /* 两条指令最小间隔（优化为 50ms，彻底消除页面切换切歌延迟） */
 #define AUDIO_SEG_MIN_MS          300U  /* 播放指令后至少多久才允许判定“播完” */
 #define AUDIO_SEG_TIMEOUT_MS    30000U  /* 单段语音超时兜底（加大至 30s，支持 0007 长语音） */
@@ -461,16 +461,19 @@ void BSP_Audio_Poll(void)
         audio_rx_parse(b);
     }
 
-    /* 2. 上电 5s 静默期：期间只收不发 */
+    /* 2. 上电 1s 静默期：期间只收不发 */
     if (!s_ready)
     {
         if ((now - s_power_on_tick) >= AUDIO_POWER_ON_WAIT_MS)
         {
             s_ready        = 1U;
-            /* 关键修复（问题1）：5秒上电初始化门闸到期，直接下发切到 SPI-FLASH 盘符，绝不能压入队列尾部！
-             * 否则若压入队列，会在欢迎语音(track 1)刚开始播放500ms时弹出执行切盘符，导致欢迎语瞬间被掐断 */
+            /* 1秒上电初始化门闸到期，直接下发切到 SPI-FLASH 盘符，绝不能压入队列尾部！ */
             n930x_switch_flash();
-            s_last_tx_tick = now;                      /* 下一条指令将在 500ms 后发出 */
+            /* 关键修复（问题3）：就绪后立即将初始音量压入指令队列，确保 N9300 硬件音量生效（默认5档），
+             * 彻底消除芯片默认 30(满音量10档) 的硬件硬伤 */
+            uint8_t init_vol = (s_current_hw_vol != 0xFFU) ? s_current_hw_vol : 15U;
+            audio_req_push(AOP_VOL, (uint16_t)init_vol);
+            s_last_tx_tick = now;
         }
         return;
     }
@@ -600,12 +603,18 @@ void BSP_Audio_SetVolume(uint8_t ui_vol_0_to_10)
     if (ui_vol_0_to_10 > AUDIO_VOL_UI_MAX) ui_vol_0_to_10 = AUDIO_VOL_UI_MAX;
     hw_vol = (uint8_t)((uint16_t)ui_vol_0_to_10 * AUDIO_VOL_HW_MAX / AUDIO_VOL_UI_MAX);
 
-    /* 关键修复（问题1）：音量未变时绝不下发，严防冗余音量指令掐断正在播放的语音 */
-    if (hw_vol == s_current_hw_vol)
+    /* 关键修复（问题1 & 3）：若音量未变且已经就绪下发过，直接返回 */
+    if (hw_vol == s_current_hw_vol && s_ready != 0U && s_pending_deferred_hw_vol == 0xFFU)
     {
         return;
     }
     s_current_hw_vol = hw_vol;
+
+    /* 若芯片尚未就绪（上电 1s 静默期），等待 s_ready 到期后自动下发 */
+    if (!s_ready)
+    {
+        return;
+    }
 
     /* 关键修复（问题1）：若芯片正在播放提示音（如0007生物反馈长语音或呼吸引导语音），
      * 绝不下发串口音量指令，避免 N9300 收到串口指令后重置/截断当前音频！
@@ -646,11 +655,9 @@ void BSP_Audio_PlayTrack(uint16_t track_id)
         }
     }
 
-    /* 若之前有不同曲目正在播放，立即停止旧曲目，杜绝旧曲目 BUSY 信号干扰新曲目 */
-    if (s_seg_active != 0U && s_last_track != track_id)
-    {
-        n930x_stop();
-    }
+    /* 关键修复（问题4）：切曲目无需先发硬件 STOP！N9300 收到新曲目 PLAY 会自主切歌。
+     * 若强行在此下发 n930x_stop()，会导致 N9300 产生 100~200ms 的 DAC 关闭延迟，
+     * 进而丢弃紧随其后的新曲目 PLAY 指令，导致模式选择中快速跳转时治疗起始提示音丢失！ */
 
     s_last_play_req_track = track_id;
     s_last_play_req_tick  = now;
@@ -729,8 +736,8 @@ void BSP_Audio_Stop(void)
     s_seg_active    = 0U;
     s_seg_busy_seen = 0U;
     s_halt_pending  = 0U;
-    s_pending_deferred_hw_vol = 0xFFU;
-    /* 关键修复（问题7）：直接下发硬件停止指令并清空队列，确保切页面时残存语音立即终止 */
+    /* 关键修复（问题3）：保留 s_pending_deferred_hw_vol，停止播放后空闲时自动补发音量，
+     * 绝不清空待发生效的音量指令！ */
     n930x_stop();
     s_last_tx_tick  = HAL_GetTick() - AUDIO_CMD_GAP_MS + 20U;
 }

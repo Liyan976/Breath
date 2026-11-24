@@ -87,10 +87,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYI: /* Page 4: jianyi (单纯简易呼吸引导测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
-                /* 关键修复（问题3）：终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
-                BSP_Audio_Stop();
-                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
+                BSP_Screen_SyncGlobalSettings();
 
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞反向翻转箭头 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
@@ -162,10 +160,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYIELEC: /* Page 6: jianyielec (简易呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                /* 关键修复（问题3）：终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
-                BSP_Audio_Stop();
-                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
+                BSP_Screen_SyncGlobalSettings();
 
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
@@ -241,10 +237,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUI: /* Page 7: fankui (单纯生物反馈呼吸测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
-                /* 关键修复（问题3）：终止菜单级残留语音，确保 0007 生物反馈呼吸引导语音从头完整播报 */
-                BSP_Audio_Stop();
-                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
+                BSP_Screen_SyncGlobalSettings();
 
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
@@ -342,10 +336,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUIELEC: /* Page 9: fankuielec (生物反馈呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
-                /* 关键修复（问题3）：终止菜单级残留语音，确保 0007 生物反馈呼吸引导语音从头完整播报 */
-                BSP_Audio_Stop();
-                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
+                BSP_Screen_SyncGlobalSettings();
 
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
@@ -450,10 +442,8 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_ELEC: /* Page 11: elec (单纯电刺激治疗测量运行) */
             if (action == 0x08U)
             {
-                /* 关键修复（问题3）：终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
-                BSP_Audio_Stop();
-                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
-                BSP_Screen_QueryBleEnable();
+                /* 关键修复（问题1 & 3）：进页面立即主动向屏幕同步蓝牙、音量与定时状态 */
+                BSP_Screen_SyncGlobalSettings();
 
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
@@ -526,7 +516,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_StopToMenu();
                 App_Therapy_ClearPausedSession();
                 App_Therapy_ResetBioCalibrationSession();
-                BSP_Screen_QueryBleEnable();
+                BSP_Screen_SyncGlobalSettings();
                 BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
             }
             else if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
@@ -543,7 +533,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x02U || action == 0x0FU) /* 点击返回 */
             {
-                BSP_Screen_QueryBleEnable();
+                BSP_Screen_SyncGlobalSettings();
             }
             break;
 
@@ -557,7 +547,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
                 App_Therapy_StopToMenu();
                 App_Therapy_ClearPausedSession();
                 /* 关键保留机制：生物反馈设置界面进入时不清除 s_bio_freq_valid，以便返回时保留呼吸频率 */
-                BSP_Screen_QueryBleEnable();
+                BSP_Screen_SyncGlobalSettings();
                 BSP_Screen_SetSettingsDisplay(g_app.volume, g_app.timer_min, g_app.ble_enabled);
             }
             else if (action == 0x10U && frame->len >= 4U) /* 实时音量调节 */
@@ -574,7 +564,7 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             }
             else if (action == 0x02U || action == 0x0FU) /* 点击返回 */
             {
-                BSP_Screen_QueryBleEnable();
+                BSP_Screen_SyncGlobalSettings();
             }
             break;
 
@@ -730,8 +720,8 @@ void ScreenTask(void const *argument)
             last_lung = 255U;
             last_remain_s = 0xFFFFU;
 
-            /* 关键修复（问题2）：处于参数设置页面期间，每 200ms 主动查询一次 start.bt_en.val，
-             * 使得在设置页面点击蓝牙开关后，即便尚未返回或尚未开启治疗，硬件逻辑也能即刻实时刷新同步！ */
+            /* 关键修复（问题1 & 3）：处于参数设置页面期间，每 200ms 主动同步一次蓝牙、音量与定时设置，
+             * 使得在设置页面点击蓝牙开关或调节音量后，即便尚未返回或尚未开启治疗，硬件逻辑也能即刻实时刷新同步！ */
             uint8_t cur_page = BSP_Screen_GetCurrentPage();
             if ((tick_cnt % 10U) == 0U &&
                 (cur_page == SCREEN_PAGE_JIANYISET ||
@@ -740,10 +730,7 @@ void ScreenTask(void const *argument)
                  cur_page == SCREEN_PAGE_LIANHESET1 ||
                  cur_page == SCREEN_PAGE_LIANHESET2))
             {
-                if (BSP_Screen_GetPendingQuery() == SCREEN_QUERY_NONE)
-                {
-                    BSP_Screen_QueryBleEnable();
-                }
+                BSP_Screen_SyncGlobalSettings();
             }
         }
 
