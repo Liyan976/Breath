@@ -87,6 +87,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYI: /* Page 4: jianyi (单纯简易呼吸引导测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
+                /* 关键修复（问题3）：终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
+                BSP_Audio_Stop();
+                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
+                BSP_Screen_QueryBleEnable();
+
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞反向翻转箭头 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
@@ -157,6 +162,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_JIANYIELEC: /* Page 6: jianyielec (简易呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
+                /* 关键修复（问题3）：终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
+                BSP_Audio_Stop();
+                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
+                BSP_Screen_QueryBleEnable();
+
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带粗糙逻辑跑飞 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
@@ -231,6 +241,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUI: /* Page 7: fankui (单纯生物反馈呼吸测量运行) */
             if (action == 0x08U) /* 刚进页面：页面加载就绪 */
             {
+                /* 关键修复（问题3）：终止菜单级残留语音，确保 0007 生物反馈呼吸引导语音从头完整播报 */
+                BSP_Audio_Stop();
+                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
+                BSP_Screen_QueryBleEnable();
+
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
@@ -327,6 +342,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_FANKUIELEC: /* Page 9: fankuielec (生物反馈呼吸 + 电刺激联合测量运行) */
             if (action == 0x08U)
             {
+                /* 关键修复（问题3）：终止菜单级残留语音，确保 0007 生物反馈呼吸引导语音从头完整播报 */
+                BSP_Audio_Stop();
+                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
+                BSP_Screen_QueryBleEnable();
+
                 /* 关键修复（问题4）：禁用屏幕内部定时器 tm0 与 tm_sec，防止屏幕自带逻辑冲突 */
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
@@ -430,6 +450,11 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
         case SCREEN_PAGE_ELEC: /* Page 11: elec (单纯电刺激治疗测量运行) */
             if (action == 0x08U)
             {
+                /* 关键修复（问题3）：终止菜单级残留语音，确保治疗页面起始提示音从头完整播报 */
+                BSP_Audio_Stop();
+                /* 关键修复（问题2）：进页面立即主动向屏幕查询最新蓝牙开关状态，确保返回治疗界面实时同步硬件逻辑 */
+                BSP_Screen_QueryBleEnable();
+
                 BSP_Screen_SendRawCmd("tm0.en=0;tm_sec.en=0");
 
                 if (frame->len >= 4U && frame->raw[3] > 0U)
@@ -516,6 +541,10 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             {
                 App_Therapy_SetTimerMin(frame->raw[3]);
             }
+            else if (action == 0x02U || action == 0x0FU) /* 点击返回 */
+            {
+                BSP_Screen_QueryBleEnable();
+            }
             break;
 
         case SCREEN_PAGE_FANKUISET:  /* Page 8:  fankuiset (生物反馈呼吸参数设置) */
@@ -542,6 +571,10 @@ static void Screen_HandleCtrlFrame(const ScreenFrame_t *frame)
             else if (action == 0x12U && frame->len >= 4U) /* 实时定时调节 */
             {
                 App_Therapy_SetTimerMin(frame->raw[3]);
+            }
+            else if (action == 0x02U || action == 0x0FU) /* 点击返回 */
+            {
+                BSP_Screen_QueryBleEnable();
             }
             break;
 
@@ -696,6 +729,22 @@ void ScreenTask(void const *argument)
         {
             last_lung = 255U;
             last_remain_s = 0xFFFFU;
+
+            /* 关键修复（问题2）：处于参数设置页面期间，每 200ms 主动查询一次 start.bt_en.val，
+             * 使得在设置页面点击蓝牙开关后，即便尚未返回或尚未开启治疗，硬件逻辑也能即刻实时刷新同步！ */
+            uint8_t cur_page = BSP_Screen_GetCurrentPage();
+            if ((tick_cnt % 10U) == 0U &&
+                (cur_page == SCREEN_PAGE_JIANYISET ||
+                 cur_page == SCREEN_PAGE_FANKUISET ||
+                 cur_page == SCREEN_PAGE_ELECSET ||
+                 cur_page == SCREEN_PAGE_LIANHESET1 ||
+                 cur_page == SCREEN_PAGE_LIANHESET2))
+            {
+                if (BSP_Screen_GetPendingQuery() == SCREEN_QUERY_NONE)
+                {
+                    BSP_Screen_QueryBleEnable();
+                }
+            }
         }
 
         /* 3. 电池图标暂定不进行变化控制，下位机不参与赋值 */

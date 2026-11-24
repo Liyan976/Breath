@@ -32,7 +32,7 @@
 
 /* ======================= 可调参数 ======================= */
 #define AUDIO_POWER_ON_WAIT_MS   5000U  /* N9300 上电初始化静默期，5s 内不发指令 */
-#define AUDIO_CMD_GAP_MS          500U  /* 两条指令最小间隔（数据手册要求） */
+#define AUDIO_CMD_GAP_MS           50U  /* 两条指令最小间隔（优化为 50ms，彻底消除页面切换切歌延迟） */
 #define AUDIO_SEG_MIN_MS          300U  /* 播放指令后至少多久才允许判定“播完” */
 #define AUDIO_SEG_TIMEOUT_MS    30000U  /* 单段语音超时兜底（加大至 30s，支持 0007 长语音） */
 #define AUDIO_HALT_HOLD_MS        300U  /* Stop 的合并窗口：窗口内来了播放请求就作废 */
@@ -534,11 +534,14 @@ void BSP_Audio_Poll(void)
     {
         uint8_t busy;
 
-        /* 关键修复（问题3）：仅当实际硬件引脚检测到低电平（0=BUSY播放中）时，才置位 s_seg_busy_seen！
-         * 切勿直接调用 BSP_Audio_IsBusy()，因其内部在 s_seg_active!=0 时恒为 1，会导致误判立即结束 */
-        if (HAL_GPIO_ReadPin(AUDIO_BUSY_GPIO_Port, AUDIO_BUSY_Pin) == GPIO_PIN_RESET)
+        /* 关键修复（问题3）：仅在播放指令下发至少 150ms 之后，才开始采集硬件 BUSY 低电平，
+         * 彻底杜绝前一首旧语音（如 0002 模式选择提示）残留低电平瞬间被误记为新语音的 BUSY 导致瞬间误判播完！ */
+        if ((now - s_seg_tick) >= 150U)
         {
-            s_seg_busy_seen = 1U;
+            if (HAL_GPIO_ReadPin(AUDIO_BUSY_GPIO_Port, AUDIO_BUSY_Pin) == GPIO_PIN_RESET)
+            {
+                s_seg_busy_seen = 1U;
+            }
         }
 
         /* 有 PLAY 还在队列里没发出去时不作判定，避免重复入队 */
@@ -643,6 +646,12 @@ void BSP_Audio_PlayTrack(uint16_t track_id)
         }
     }
 
+    /* 若之前有不同曲目正在播放，立即停止旧曲目，杜绝旧曲目 BUSY 信号干扰新曲目 */
+    if (s_seg_active != 0U && s_last_track != track_id)
+    {
+        n930x_stop();
+    }
+
     s_last_play_req_track = track_id;
     s_last_play_req_tick  = now;
 
@@ -650,9 +659,15 @@ void BSP_Audio_PlayTrack(uint16_t track_id)
     audio_req_purge(AOP_PLAY);
     s_q_count       = 0U;
     s_q_idx         = 0U;
+    s_seg_active    = 0U;
     s_seg_busy_seen = 0U;
 
     audio_req_push(AOP_PLAY, track_id);
+    /* 允许立即发送新曲目播放指令，不等待旧指令间隔 */
+    if ((now - s_last_tx_tick) < AUDIO_CMD_GAP_MS)
+    {
+        s_last_tx_tick = now - AUDIO_CMD_GAP_MS + 20U;
+    }
 }
 
 void BSP_Audio_PlayVoice(AudioVoiceId_t id)
@@ -712,11 +727,12 @@ void BSP_Audio_Stop(void)
     s_q_count       = 0U;
     s_q_idx         = 0U;
     s_seg_active    = 0U;
+    s_seg_busy_seen = 0U;
     s_halt_pending  = 0U;
     s_pending_deferred_hw_vol = 0xFFU;
     /* 关键修复（问题7）：直接下发硬件停止指令并清空队列，确保切页面时残存语音立即终止 */
     n930x_stop();
-    s_last_tx_tick  = HAL_GetTick();
+    s_last_tx_tick  = HAL_GetTick() - AUDIO_CMD_GAP_MS + 20U;
 }
 
 void BSP_Audio_Pause(void)

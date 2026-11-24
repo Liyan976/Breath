@@ -59,15 +59,6 @@ static void screen_uart_send_bytes(const uint8_t *data, uint16_t len)
     }
 }
 
-/**
- * @brief  发送淘晶驰串口屏标准 3 字节结束符（0xFF 0xFF 0xFF）
- * @retval 无
- */
-static void screen_send_end(void)
-{
-    static const uint8_t end[3] = {0xFFU, 0xFFU, 0xFFU};
-    screen_uart_send_bytes(end, 3U);
-}
 
 /**
  * @brief  初始化串口屏驱动（创建发送互斥锁，清空缓冲区并启动 USART3 单字节接收中断）
@@ -220,14 +211,52 @@ uint32_t BSP_Screen_GetRxOverflowCount(void)
 
 /**
  * @brief  发送原始串口屏指令并自动附加结束符 0xFF 0xFF 0xFF
- * @param  cmd: ASCII 指令字符串，如 "page running"
+ * @note   支持使用分号 ';' 分隔的多条复合指令，在单次互斥锁保护下逐条补齐 0xFF 0xFF 0xFF 原子发出，
+ *         彻底避免淘晶驰协议不识别分号导致报语法错误（0x1A）并吞噬箭头显隐指令的问题
+ * @param  cmd: ASCII 指令字符串，如 "page running" 或 "vis p1,1;vis p2,0"
  * @retval 无
  */
 void BSP_Screen_SendRawCmd(const char *cmd)
 {
     if (cmd == NULL) return;
-    screen_uart_send_bytes((const uint8_t *)cmd, (uint16_t)strlen(cmd));
-    screen_send_end();
+
+    uint8_t locked = 0U;
+    if (s_tx_mutex != NULL)
+    {
+        if (osMutexWait(s_tx_mutex, 50U) == osOK)
+        {
+            locked = 1U;
+        }
+    }
+
+    static const uint8_t end[3] = {0xFFU, 0xFFU, 0xFFU};
+    const char *p = cmd;
+    const char *start = cmd;
+
+    while (*p != '\0')
+    {
+        if (*p == ';')
+        {
+            if (p > start)
+            {
+                HAL_UART_Transmit(&huart3, (uint8_t *)start, (uint16_t)(p - start), 50U);
+                HAL_UART_Transmit(&huart3, (uint8_t *)end, 3U, 50U);
+            }
+            start = p + 1;
+        }
+        p++;
+    }
+
+    if (p > start)
+    {
+        HAL_UART_Transmit(&huart3, (uint8_t *)start, (uint16_t)(p - start), 50U);
+        HAL_UART_Transmit(&huart3, (uint8_t *)end, 3U, 50U);
+    }
+
+    if (locked)
+    {
+        osMutexRelease(s_tx_mutex);
+    }
 }
 
 /**
