@@ -31,7 +31,7 @@
 #include <string.h>
 
 /* ======================= 可调参数 ======================= */
-#define AUDIO_POWER_ON_WAIT_MS   1200U  /* N9300 上电初始化静默期优化为 1.2s，确保 SPI-Flash FAT 挂载稳定 */
+#define AUDIO_POWER_ON_WAIT_MS   1000U  /* N9300 上电硬件初始化静默期（1s） */
 #define AUDIO_CMD_GAP_MS           50U  /* 两条指令最小间隔（优化为 50ms，彻底消除页面切换切歌延迟） */
 #define AUDIO_SEG_MIN_MS          300U  /* 播放指令后至少多久才允许判定“播完” */
 #define AUDIO_SEG_TIMEOUT_MS    30000U  /* 单段语音超时兜底（加大至 30s，支持 0007 长语音） */
@@ -91,9 +91,11 @@ static volatile uint8_t s_last_ack_cmd = 0U;   /* 最近应答的 CMD */
 static volatile uint8_t s_online       = 0U;   /* 收到过合法应答即认为在线 */
 static volatile uint8_t s_last_error   = 0U;   /* AA 55 02 FF xx 中的 xx */
 
-static uint32_t s_power_on_tick = 0U;
-static uint8_t  s_ready         = 0U;          /* 上电初始化 5s 门闸 */
-static uint32_t s_last_tx_tick  = 0U;
+static uint32_t s_power_on_tick   = 0U;
+static uint8_t  s_ready           = 0U;          /* 上电初始化门闸 */
+static uint8_t  s_boot_stage      = 0U;          /* 开机分步就绪阶段：0=等待上电, 1=切盘符, 2=设音量, 3=就绪 */
+static uint32_t s_boot_stage_tick = 0U;
+static uint32_t s_last_tx_tick    = 0U;
 
 /* 指令 FIFO */
 static audio_req_t s_req[AUDIO_FIFO_MAX];
@@ -413,9 +415,11 @@ void BSP_Audio_Init(void)
     s_q_idx       = 0U;
     s_seg_active  = 0U;
     s_seg_busy_seen = 0U;
-    s_ready       = 0U;
-    s_power_on_tick = HAL_GetTick();
-    s_last_tx_tick  = 0U;
+    s_ready           = 0U;
+    s_boot_stage      = 0U;
+    s_boot_stage_tick = 0U;
+    s_power_on_tick   = HAL_GetTick();
+    s_last_tx_tick    = 0U;
     s_last_ack_cmd  = 0U;
     s_online        = 0U;
     s_last_error    = 0U;
@@ -461,25 +465,50 @@ void BSP_Audio_Poll(void)
         audio_rx_parse(b);
     }
 
-    /* 2. 上电静默期：期间只收不发 */
+    /* 2. 上电分步初始化状态机：切盘符(等待250ms) -> 设音量(等待100ms) -> 播欢迎语 */
     if (!s_ready)
     {
-        if ((now - s_power_on_tick) >= AUDIO_POWER_ON_WAIT_MS)
+        switch (s_boot_stage)
         {
-            s_ready        = 1U;
-            /* 1.2秒上电初始化门闸到期，直接下发切到 SPI-FLASH 盘符 */
-            n930x_switch_flash();
-            /* 关键时序：切盘符指令发出后，强制后续指令等待至少 250ms，留足 N9300 建立 FAT 句柄时间 */
-            s_last_tx_tick = now + 250U;
-            /* 关键修复（问题3）：就绪后立即将初始音量压入指令队列，确保 N9300 硬件音量生效（默认5档），
-             * 彻底消除芯片默认 30(满音量10档) 的硬件硬伤 */
-            uint8_t init_vol = (s_current_hw_vol != 0xFFU) ? s_current_hw_vol : 15U;
-            audio_req_push(AOP_VOL, (uint16_t)init_vol);
-            /* 关键修复：开机欢迎语保底入队，确保上电就绪后必定顺畅播放欢迎语音 */
-            if (!audio_req_has(AOP_PLAY))
-            {
-                audio_req_push(AOP_PLAY, (uint16_t)AUDIO_VOICE_WELCOME);
-            }
+            case 0U:
+                /* 阶段 0：等待 N9300 硬件芯片上电稳定（1.0s） */
+                if ((now - s_power_on_tick) >= AUDIO_POWER_ON_WAIT_MS)
+                {
+                    n930x_switch_flash();
+                    s_boot_stage_tick = now;
+                    s_boot_stage = 1U;
+                }
+                break;
+
+            case 1U:
+                /* 阶段 1：留足 250ms 让 N9300 建立 SPI-Flash FAT 句柄，随后下发初始硬件音量 */
+                if ((now - s_boot_stage_tick) >= 250U)
+                {
+                    uint8_t init_vol = (s_current_hw_vol != 0xFFU) ? s_current_hw_vol : 15U;
+                    n930x_volume(init_vol);
+                    s_current_hw_vol = init_vol;
+                    s_boot_stage_tick = now;
+                    s_boot_stage = 2U;
+                }
+                break;
+
+            case 2U:
+                /* 阶段 2：留足 100ms 让音量配置在 N9300 内部完全生效，置位就绪并下发开机欢迎语 */
+                if ((now - s_boot_stage_tick) >= 100U)
+                {
+                    s_ready = 1U;
+                    s_boot_stage = 3U;
+                    /* 确保开机欢迎语入队播放：清空静默期内可能冗余的旧PLAY请求，确保从头完整播放欢迎语 */
+                    audio_req_purge(AOP_PLAY);
+                    audio_req_push(AOP_PLAY, (uint16_t)AUDIO_VOICE_WELCOME);
+                    /* 允许立即弹出并下发欢迎语播放指令 */
+                    s_last_tx_tick = now - AUDIO_CMD_GAP_MS;
+                }
+                break;
+
+            default:
+                s_ready = 1U;
+                break;
         }
         return;
     }
@@ -745,8 +774,12 @@ void BSP_Audio_Stop(void)
     s_last_play_req_track = 0U; /* 关键：重置最近播放记录，允许 Stop 后重新请求同一曲目，防止防抖误杀 */
     /* 关键修复（问题3）：保留 s_pending_deferred_hw_vol，停止播放后空闲时自动补发音量，
      * 绝不清空待发生效的音量指令！ */
-    n930x_stop();
-    s_last_tx_tick  = HAL_GetTick() - AUDIO_CMD_GAP_MS + 20U;
+    /* 关键修复：未就绪阶段(上电前1.35秒内)切勿向尚未就绪的 N9300 硬件直接发串口 STOP 指令 */
+    if (s_ready != 0U)
+    {
+        n930x_stop();
+        s_last_tx_tick  = HAL_GetTick() - AUDIO_CMD_GAP_MS + 20U;
+    }
 }
 
 void BSP_Audio_Pause(void)
